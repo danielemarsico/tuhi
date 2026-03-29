@@ -440,8 +440,8 @@ def setup_logging(config_dir):
 
 
 def main(args=sys.argv):
-    if sys.version_info < (3, 6):
-        sys.exit('Python 3.6 or later required')
+    if sys.version_info < (3, 12):
+        sys.exit('Python 3.12 or later required')
 
     desc = 'Daemon to extract the pen stroke data from Wacom SmartPad devices'
     parser = argparse.ArgumentParser(description=desc)

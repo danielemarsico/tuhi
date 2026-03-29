@@ -32,7 +32,7 @@ To build and run Tuhi from the repository directly:
  $> ./builddir/tuhi.devel
 ```
 
-Tuhi requires Python v3.6 or above.
+Tuhi requires Python v3.12 or above.
 
 Installing Tuhi
 ---------------
@@ -52,7 +52,7 @@ Run Tuhi with:
  $> tuhi
 ```
 
-Tuhi requires Python v3.6 or above.
+Tuhi requires Python v3.12 or above.
 
 Flatpak
 -------

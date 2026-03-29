@@ -1,7 +1,7 @@
 project('tuhi',
 	version: '0.6',
 	license: 'GPLv2',
-	meson_version: '>= 0.50.0')
+	meson_version: '>= 0.56.0')
 # The tag date of the project_version(), update when the version bumps.
 version_date='2022-04-28'
 
@@ -13,7 +13,7 @@ datadir = join_paths(prefix, get_option('datadir'))
 localedir = join_paths(prefix, get_option('localedir'))
 pkgdatadir = join_paths(datadir, meson.project_name())
 bindir = join_paths(prefix, get_option('bindir'))
-podir = join_paths(meson.source_root(), 'po')
+podir = join_paths(meson.project_source_root(), 'po')
 desktopdir = join_paths(datadir, 'applications')
 icondir = join_paths(datadir, 'icons', 'hicolor')
 icondir_scalable = join_paths(icondir, 'scalable', 'apps')
@@ -38,17 +38,7 @@ python_modules = [
     'gi',
     'cairo',
 ]
-if meson.version().version_compare('>=0.51')
-    py3 = pymod.find_installation(modules: python_modules)
-else
-    py3 = pymod.find_installation()
-
-    foreach module: python_modules
-        if run_command(py3, '-c', 'import @0@'.format(module)).returncode() != 0
-            error('Failed to find required python module \'@0@\'.'.format(module))
-        endif
-    endforeach
-endif
+py3 = pymod.find_installation(modules: python_modules)
 python_dir = py3.get_install_dir()
 install_subdir('tuhi',
                install_dir: python_dir,
@@ -74,7 +64,7 @@ config_tuhi_devel.set('devel', '''
 tuhi_gui = '@1@/tuhi-gui.devel'
 tuhi_server = '@0@/tuhi-server.py'
 print('Running from source tree, using local files')
-'''.format(meson.source_root(), meson.build_root()))
+'''.format(meson.project_source_root(), meson.project_build_root()))
 
 config_tuhigui = configuration_data()
 config_tuhigui.set('pkgdatadir', pkgdatadir)
@@ -82,12 +72,12 @@ config_tuhigui.set('localedir', localedir)
 config_tuhigui.set('devel', '')
 
 config_tuhigui_devel = config_tuhigui
-config_tuhigui_devel.set('pkgdatadir', join_paths(meson.build_root(), 'data'))
-config_tuhigui_devel.set('localedir', join_paths(meson.build_root(), 'po'))
+config_tuhigui_devel.set('pkgdatadir', join_paths(meson.project_build_root(), 'data'))
+config_tuhigui_devel.set('localedir', join_paths(meson.project_build_root(), 'po'))
 config_tuhigui_devel.set('devel', '''
 sys.path.insert(1, '@0@')
 print('Running from source tree, using local files')
-'''.format(meson.source_root(), meson.build_root()))
+'''.format(meson.project_source_root(), meson.project_build_root()))
 
 configure_file(input: 'tuhi.in',
 	       output: 'tuhi',
@@ -143,15 +133,15 @@ flake8 = find_program('flake8-3', 'flake8', required: false)
 if flake8.found()
    test('flake8', flake8,
         args: ['--ignore=E501,W504',
-               join_paths(meson.source_root(), 'tuhi'),
-               join_paths(meson.source_root(), 'tuhi', 'gui')])
+               join_paths(meson.project_source_root(), 'tuhi'),
+               join_paths(meson.project_source_root(), 'tuhi', 'gui')])
    test('flake8-tools', flake8,
         args: ['--ignore=E501,W504',
-               join_paths(meson.source_root(), 'tools')])
+               join_paths(meson.project_source_root(), 'tools')])
    # the tests need different flake exclusions
    test('flake8-tests', flake8,
         args: ['--ignore=E501,W504,F403,F405',
-               join_paths(meson.source_root(), 'test/')])
+               join_paths(meson.project_source_root(), 'test/')])
 endif
 
 desktop_validate = find_program('desktop-file-validate', required: false)
@@ -168,7 +158,7 @@ endif
 pytest = find_program('pytest-3', required: false)
 if pytest.found()
     test('unittest', pytest,
-         args: [join_paths(meson.source_root(), 'test')],
+         args: [join_paths(meson.project_source_root(), 'test')],
          timeout: 180)
 endif
 

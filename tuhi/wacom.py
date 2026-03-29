@@ -40,7 +40,7 @@ SYSEVENT_NOTIFICATION_SERVICE_UUID = '3a340720-c572-11e5-86c5-0002a5d5c51b'  # N
 SYSEVENT_NOTIFICATION_CHRC_UUID    = '3a340721-c572-11e5-86c5-0002a5d5c51b'  # NOQA
 
 
-class IDGenerator(object):
+class IDGenerator:
     _session = uuid.uuid4().hex
     _instance = 0
 
@@ -119,7 +119,7 @@ def list2hexlist(lst):
     return '[' + ', '.join([f'{x:#04x}' for x in lst]) + ']'
 
 
-class DataLogger(object):
+class DataLogger:
     '''
     A wrapper to log data transfer between the device and Tuhi. Use as::
 
@@ -135,7 +135,7 @@ class DataLogger(object):
     Targets for log are $HOME/.share/tuhi/12:AB:23:CD:.../<timestamp>.yml
 
     '''
-    class _Nordic(object):
+    class _Nordic:
         source = 'NORDIC'
 
         def __init__(self, parent):
@@ -147,7 +147,7 @@ class DataLogger(object):
         def request(self, request):
             return self.parent._request(self.source, request)
 
-    class _Pen(object):
+    class _Pen:
         source = 'PEN'
 
         def __init__(self, parent):
@@ -156,7 +156,7 @@ class DataLogger(object):
         def recv(self, data):
             return self.parent._recv(self.source, data)
 
-    class _SysEvent(object):
+    class _SysEvent:
         source = 'SYSEVENT'
 
         def __init__(self, parent):
