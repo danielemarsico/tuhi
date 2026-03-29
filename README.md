@@ -22,7 +22,14 @@ Devices tested and known to be supported:
 Building Tuhi
 -------------
 
-To build and run Tuhi from the repository directly:
+Tuhi requires **Python v3.12 or above** and the following dependencies:
+
+* **PyGObject** 3.30+
+* **svgwrite**
+* **xdg** (pyxdg)
+* **cairo** (via PyGObject introspection)
+
+### Build from source (development)
 
 ```
  $> git clone http://github.com/tuhiproject/tuhi
@@ -32,12 +39,83 @@ To build and run Tuhi from the repository directly:
  $> ./builddir/tuhi.devel
 ```
 
-Tuhi requires Python v3.12 or above.
+The `tuhi.devel` script runs directly from the build tree without installing.
 
-Installing Tuhi
----------------
+### Running tests
 
-To install and run Tuhi:
+```
+ $> ninja -C builddir test
+```
+
+This runs flake8 linting and pytest unit tests.
+
+Debugging Tuhi
+--------------
+
+### Verbose logging
+
+Pass `-v` or `--verbose` to enable DEBUG-level console output:
+
+```
+ $> ./builddir/tuhi.devel --verbose
+```
+
+### Session logs
+
+Every run writes a detailed log to:
+
+```
+~/.local/share/tuhi/session-logs/tuhi-YY-MM-DD-HH:MM:SS.log
+```
+
+These logs contain DEBUG-level output regardless of the `-v` flag.
+
+### Raw BLE communication logs
+
+Per-device BLE traffic is recorded in:
+
+```
+~/.local/share/tuhi/<BT_ADDRESS>/raw/log-*.yaml
+```
+
+These are useful for diagnosing protocol-level issues.
+
+### Peek mode
+
+Download only the first drawing without deleting it from the device:
+
+```
+ $> ./builddir/tuhi.devel --peek
+```
+
+### Custom config directory
+
+Use `--config-dir` to override the default data/config location:
+
+```
+ $> ./builddir/tuhi.devel --config-dir /tmp/tuhi-debug
+```
+
+### Debugging tools
+
+| Tool                          | Purpose                                         |
+|-------------------------------|--------------------------------------------------|
+| `tools/kete.py`               | Interactive CLI for direct device communication  |
+| `tools/tuhi-live.py`          | Stream live pen input in real-time               |
+| `tools/parse_log.py`          | Parse btsnoop Bluetooth capture files            |
+| `tools/raw-log-converter.py`  | Convert raw BLE communication logs               |
+| `tools/exporter.py`           | Export drawings from stored JSON                 |
+
+### Named loggers
+
+The codebase uses fine-grained loggers you can filter on:
+`tuhi`, `tuhi.protocol`, `tuhi.ble`, `tuhi.wacom`, `tuhi.config`,
+`tuhi.dbusserver`, `tuhi.drawing`, `tuhi.dbusclient`.
+
+Deploying Tuhi
+--------------
+
+### System-wide install (Meson)
 
 ```
  $> git clone http://github.com/tuhiproject/tuhi
@@ -52,10 +130,11 @@ Run Tuhi with:
  $> tuhi
 ```
 
-Tuhi requires Python v3.12 or above.
+This installs the `tuhi`, `tuhi-gui`, and `tuhi-server` executables, the
+desktop file (`org.freedesktop.Tuhi.desktop`), and appdata to the standard
+freedesktop.org locations.
 
-Flatpak
--------
+### Flatpak
 
 ```
  $> git clone http://github.com/tuhiproject/tuhi
@@ -69,17 +148,66 @@ Tuhi being able to remember devices and the data storage. Switching between
 the Flatpak and a normal installation requires re-registering the device and
 previously downloaded drawings may become inaccessible.
 
+### Arch Linux
+
+Available via AUR: [tuhi-git](https://aur.archlinux.org/packages/tuhi-git/)
+
 Bamboo Folio Support
 --------------------
 
 The Bamboo Folio is the A4-sized sibling of the Bamboo Slate. It uses the
-same **SLATE** protocol and is fully supported by Tuhi. The device dimensions
-(~297 × 210 mm for A4) are read dynamically from the device at connection time
-via the `GET_WIDTH` and `GET_HEIGHT` protocol messages, so no special
-configuration is needed — Tuhi adapts automatically.
+same **SLATE** protocol and is fully supported by Tuhi.
+
+### Connection Protocol
+
+The Bamboo Folio communicates over **Bluetooth Low Energy (BLE)** using the
+**Nordic UART Service (NUS)**. The full connection flow is:
+
+1. **Discovery** — Tuhi scans for BLE advertisements matching Wacom company
+   IDs (`0x4755`, `0x4157`, `0x424d`).
+2. **GATT connection** — Tuhi connects to the device's GATT server and
+   subscribes to the Nordic UART RX characteristic
+   (`6e400003-b5a3-f393-e0a9-e50e24dcca9e`) for incoming data. Outgoing
+   commands are written to the TX characteristic
+   (`6e400002-b5a3-f393-e0a9-e50e24dcca9e`).
+3. **Protocol detection** — If the device exposes the System Event
+   Notification GATT characteristic, Tuhi selects the SLATE protocol;
+   otherwise it falls back to SPARK.
+4. **Authentication** — Tuhi authenticates using a UUID that was assigned
+   during the initial registration (6-second button hold). Without this UUID,
+   the device will not respond.
+5. **Dimension query** — Unlike the Spark (which uses hardcoded dimensions),
+   the Folio's dimensions (~297 × 210 mm for A4) are read dynamically at
+   connection time via `GET_WIDTH`, `GET_HEIGHT`, and `GET_POINT_SIZE` protocol
+   messages. This allows Tuhi to adapt automatically to the device's actual
+   drawing area.
+6. **Data transfer** — Binary stroke data is downloaded over Nordic UART,
+   parsed into `Drawing` / `Stroke` / `Point` objects, and saved as JSON.
+
+The protocol implementation lives in `tuhi/wacom.py` (`WacomProtocolSlate`
+class, which inherits from `WacomProtocolSpark`) and `tuhi/protocol.py` (70+
+opcodes per protocol version).
+
+### SLATE Protocol Details
+
+| Property       | Value                        |
+|----------------|------------------------------|
+| Pressure       | 11-bit (0–2047)              |
+| Point size     | 10 µm (read from device)     |
+| Dimensions     | Read dynamically from device |
+| Orientation    | Portrait                     |
+| Base class     | `WacomProtocolSpark`         |
 
 Registration and usage are identical to the Bamboo Slate (see
 "Registering devices" below).
+
+Cross-Currency Support
+----------------------
+
+**Note:** Tuhi is a drawing/ink application for Wacom SmartPad devices. It does
+not include any cross-currency or financial functionality. If you are looking
+for currency conversion or multi-currency features, those are outside the scope
+of this project.
 
 Architecture
 ------------
@@ -202,11 +330,6 @@ by "hi $foo, I want to connect".
 
 The word "register" was chosen because "pairing" is already in use by
 Bluetooth.
-
-Packages
---------
-
-Arch Linux: [tuhi-git](https://aur.archlinux.org/packages/tuhi-git/)
 
 Device notes
 ============
