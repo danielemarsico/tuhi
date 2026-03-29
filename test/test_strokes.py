@@ -69,7 +69,7 @@ def test_log_files(logfile):
     StrokeFile(data)
 
 
-class TestStrokeParsers(object):
+class TestStrokeParsers:
     def test_identify_file_header(self):
         data = [0x67, 0x82, 0x69, 0x65]
         assert StrokeDataType.identify(data) == StrokeDataType.FILE_HEADER
@@ -322,7 +322,7 @@ class TestStrokeParsers(object):
         assert packet.dp == 5
 
 
-class TestStrokes(object):
+class TestStrokes:
     def test_single_stroke(self):
         data = '''
             67 82 69 65 22 73 53 5d    00 00 02 00 00 00 00 00    ff fa c3 1f

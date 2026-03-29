@@ -31,7 +31,7 @@ from tuhi.protocol import *  # noqa
 SUCCESS = NordicData([0xb3, 0x1, 0x00])
 
 
-class TestUtils(object):
+class TestUtils:
     def test_hex_string(self):
         values = [
             ([0x00, 0x12], '00 12'),
@@ -107,7 +107,7 @@ class TestUtils(object):
                 little_u32(v)
 
 
-class TestProtocolAny(object):
+class TestProtocolAny:
     protocol_version = ProtocolVersion.ANY
 
     def test_get_protocol(self):

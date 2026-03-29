@@ -147,8 +147,8 @@ def gtk_style():
 
 
 def main(argv):
-    if sys.version_info < (3, 6):
-        sys.exit('Python 3.6 or later required')
+    if sys.version_info < (3, 12):
+        sys.exit('Python 3.12 or later required')
 
     import gettext
     import locale

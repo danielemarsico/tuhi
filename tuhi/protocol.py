@@ -251,7 +251,7 @@ class Mode(enum.IntEnum):
     IDLE = 0x02
 
 
-class Protocol(object):
+class Protocol:
     '''
     The main communication class.
 
@@ -455,7 +455,7 @@ class DeviceError(ProtocolError):
         return f'DeviceError.{self.errorcode.name}'
 
 
-class Msg(object):
+class Msg:
     '''
     A single logical interaction (request + reply) with the Wacom device.
     In some cases a :class:`Msg` may issue multiple requests and replies as
@@ -1444,7 +1444,7 @@ class StrokeDataType(enum.Enum):
         return StrokeDataType.UNKNOWN
 
 
-class StrokeFile(object):
+class StrokeFile:
     '''
     Represents a single file as coming from the device. Note that pen data
     received from the device may include more than one file, this object is
@@ -1626,7 +1626,7 @@ class StrokeFile(object):
         return consumed
 
 
-class StrokePacket(object):
+class StrokePacket:
     '''
     .. attribute: size
 
@@ -1775,7 +1775,7 @@ class StrokeHeader(StrokePacket):
         return f'StrokeHeader: time: {t} new layer: {self.is_new_layer}, pen type: {self.pen_type}, pen id: {self.pen_id:#x}'
 
 
-class StrokeDelta(object):
+class StrokeDelta:
     '''
     .. attribute:: x
 

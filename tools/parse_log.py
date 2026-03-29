@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 #
 #  This program is free software; you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
@@ -11,7 +11,7 @@
 #  GNU General Public License for more details.
 #
 
-# This Python 2 program allows to translate btsnoop capture files to
+# This program allows to translate btsnoop capture files to
 # raw data coming from the various endpoints.
 #
 # You need to retrieve a btsnoop capture file from Android:
@@ -26,8 +26,6 @@
 # * Copy the `btsnoop_hci.log` file into `Downloads`, connect the Android
 #   device to a computer and download the file. Or mail it to yourself. Or
 #   whatever other way you find to get that file onto your computer.
-
-from __future__ import print_function
 
 import sys
 import binascii

@@ -23,8 +23,8 @@ tuhi_gui = Path('@libexecdir@', 'tuhi-gui')
 @devel@  # NOQA
 
 if __name__ == '__main__':
-    if sys.version_info < (3, 6):
-        sys.exit('Python 3.6 or later required')
+    if sys.version_info < (3, 12):
+        sys.exit('Python 3.12 or later required')
 
     parser = argparse.ArgumentParser(description='Tuhi')
     parser.add_argument('--flatpak-compatibility-mode',
