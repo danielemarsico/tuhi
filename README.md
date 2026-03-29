@@ -9,6 +9,25 @@ data as SVGs.
 
 Tuhi is the Māori word for "to draw".
 
+Supported Platforms
+-------------------
+
+**Tuhi is a Linux-only application.** It depends on several Linux-specific
+technologies that have no equivalents on Windows or macOS:
+
+| Dependency      | Purpose                                  | Why Linux-only                           |
+|-----------------|------------------------------------------|------------------------------------------|
+| **BlueZ**       | Bluetooth Low Energy communication       | Linux Bluetooth stack; Windows uses a different API |
+| **D-Bus**       | IPC between tuhi-server, tuhi-gui, and BlueZ | freedesktop.org standard; not available on Windows |
+| **UHID**        | Live pen input via `/dev/uhid`           | Linux kernel subsystem                   |
+| **GTK 3 / GLib**| GUI and main loop                        | GNOME ecosystem; tightly coupled to D-Bus |
+| **XDG directories** | Config and data storage (`~/.local/share/tuhi/`) | POSIX standard paths              |
+
+**Windows is not supported.** The codebase contains no platform abstractions,
+no Windows Bluetooth API integration, and no conditional imports. Running on
+Windows (including WSL) is not possible without fundamental architectural
+changes to replace BlueZ, D-Bus, and UHID with cross-platform alternatives.
+
 Supported Devices
 -----------------
 
@@ -19,8 +38,8 @@ Devices tested and known to be supported:
 * Bamboo Folio (A4 — uses the Slate protocol, dimensions read dynamically)
 * Intuos Pro Paper
 
-Building Tuhi
--------------
+Building Tuhi (Linux)
+---------------------
 
 Tuhi requires **Python v3.12 or above** and the following dependencies:
 
@@ -28,6 +47,31 @@ Tuhi requires **Python v3.12 or above** and the following dependencies:
 * **svgwrite**
 * **xdg** (pyxdg)
 * **cairo** (via PyGObject introspection)
+
+### Installing dependencies
+
+On Debian/Ubuntu:
+
+```
+ $> sudo apt install python3-dev python3-gi python3-cairo \
+        python3-xdg python3-svgwrite meson ninja-build \
+        libglib2.0-dev gettext
+```
+
+On Fedora:
+
+```
+ $> sudo dnf install python3-devel python3-gobject python3-cairo \
+        python3-pyxdg python3-svgwrite meson ninja-build \
+        glib2-devel gettext
+```
+
+On Arch Linux:
+
+```
+ $> sudo pacman -S python-gobject python-cairo python-xdg \
+        python-svgwrite meson ninja gettext
+```
 
 ### Build from source (development)
 
@@ -49,8 +93,30 @@ The `tuhi.devel` script runs directly from the build tree without installing.
 
 This runs flake8 linting and pytest unit tests.
 
-Debugging Tuhi
---------------
+Running Tuhi (Linux)
+--------------------
+
+Tuhi requires a running Bluetooth daemon (BlueZ) and D-Bus session bus.
+Most Linux desktop environments provide both by default.
+
+### From the build tree (development)
+
+```
+ $> ./builddir/tuhi.devel
+```
+
+### After system-wide install
+
+```
+ $> tuhi
+```
+
+The `tuhi` launcher starts both the background daemon (`tuhi-server`) and
+the GTK GUI (`tuhi-gui`). Make sure your Wacom device is registered first
+(see "Registering devices" below).
+
+Debugging Tuhi (Linux)
+----------------------
 
 ### Verbose logging
 
@@ -112,8 +178,21 @@ The codebase uses fine-grained loggers you can filter on:
 `tuhi`, `tuhi.protocol`, `tuhi.ble`, `tuhi.wacom`, `tuhi.config`,
 `tuhi.dbusserver`, `tuhi.drawing`, `tuhi.dbusclient`.
 
-Deploying Tuhi
---------------
+### Debugging with bluetoothctl
+
+For low-level Bluetooth troubleshooting, use `bluetoothctl` to inspect
+the BLE connection independently of Tuhi:
+
+```
+ $> bluetoothctl
+ [bluetooth]# scan on
+ [bluetooth]# connect <BT_ADDRESS>
+```
+
+See "Device notes" at the end of this file for device-specific tips.
+
+Deploying Tuhi (Linux)
+----------------------
 
 ### System-wide install (Meson)
 
