@@ -16,6 +16,7 @@ Devices tested and known to be supported:
 
 * Bamboo Spark
 * Bamboo Slate
+* Bamboo Folio (A4 — uses the Slate protocol, dimensions read dynamically)
 * Intuos Pro Paper
 
 Building Tuhi
@@ -67,6 +68,107 @@ Note that Flatpak's containers use different XDG directories. This affects
 Tuhi being able to remember devices and the data storage. Switching between
 the Flatpak and a normal installation requires re-registering the device and
 previously downloaded drawings may become inaccessible.
+
+Bamboo Folio Support
+--------------------
+
+The Bamboo Folio is the A4-sized sibling of the Bamboo Slate. It uses the
+same **SLATE** protocol and is fully supported by Tuhi. The device dimensions
+(~297 × 210 mm for A4) are read dynamically from the device at connection time
+via the `GET_WIDTH` and `GET_HEIGHT` protocol messages, so no special
+configuration is needed — Tuhi adapts automatically.
+
+Registration and usage are identical to the Bamboo Slate (see
+"Registering devices" below).
+
+Architecture
+------------
+
+Tuhi is split into a background daemon (`tuhi-server`) that manages Bluetooth
+communication, and a GTK GUI (`tuhi-gui`) that talks to the daemon over DBus.
+The launcher script (`tuhi`) starts both.
+
+### Module Overview
+
+```
+tuhi/
+├── base.py          Orchestrator — bridges BlueZ, config, and DBus
+├── ble.py           BlueZ / D-Bus wrappers for BLE GATT communication
+├── wacom.py         Wacom device logic & protocol class hierarchy
+├── protocol.py      BLE protocol messages (70+ opcodes per protocol version)
+├── config.py        Per-device config & drawing storage (~/.local/share/tuhi/)
+├── drawing.py       Data model: Drawing → Stroke → Point
+├── dbusserver.py    DBus service (org.freedesktop.tuhi1)
+├── dbusclient.py    DBus client used by the GUI
+├── export.py        SVG and PNG export (pressure-sensitive stroke widths)
+├── uhid.py          Kernel UHID device for live pen input
+└── util.py          Small helpers
+```
+
+### Communication Stack
+
+```
+  GTK GUI  (tuhi-gui)
+     │  DBus (org.freedesktop.tuhi1)
+     ▼
+  Tuhi Daemon  (tuhi-server / base.py)
+     │
+     ▼
+  WacomDevice  (wacom.py  — one per tablet, runs in its own thread)
+     │
+     ▼
+  WacomProtocol{Spark,Slate,IntuosPro}  (wacom.py + protocol.py)
+     │  Nordic UART Service over BLE GATT
+     ▼
+  BlueZDevice / BlueZDeviceManager  (ble.py)
+     │  D-Bus  →  BlueZ 5
+     ▼
+  Linux Bluetooth (HCI)
+```
+
+### Protocol Versions
+
+The three protocol families form an inheritance chain:
+
+| Protocol    | Devices                | Pressure | Point Size | Dimensions (default) |
+|-------------|------------------------|----------|------------|----------------------|
+| SPARK       | Bamboo Spark           | 10-bit   | 10 µm      | 210 × 148 mm         |
+| SLATE       | Bamboo Slate / Folio   | 11-bit   | 10 µm      | read from device     |
+| INTUOS_PRO  | Intuos Pro Paper       | 13-bit   | 5 µm       | 448 × 296 mm         |
+
+Protocol detection is automatic: if the device exposes the System Event
+Notification GATT characteristic it uses SLATE (or INTUOS_PRO); otherwise it
+uses SPARK.
+
+### Device Modes
+
+| Mode      | Trigger                         | What happens                                    |
+|-----------|----------------------------------|-------------------------------------------------|
+| Register  | Hold button 6 s (blue LED blinks) | Tuhi assigns a UUID; device stores it in firmware |
+| Listen    | Short button press               | Tuhi connects, downloads stored drawings, deletes them from device |
+| Live      | Started via DBus method          | Pen data streamed in real-time to a UHID kernel device |
+
+### Data Flow (Listen / Offline)
+
+1. User draws on paper, pen strokes are stored in device memory.
+2. User presses the device button → device advertises via BLE.
+3. Tuhi detects the advertisement (Wacom company IDs `0x4755`, `0x4157`,
+   `0x424d`), connects, authenticates with the stored UUID.
+4. Tuhi downloads binary stroke data over Nordic UART, parses it into
+   `Drawing` / `Stroke` / `Point` objects.
+5. Drawings are saved as JSON in `~/.local/share/tuhi/<BT_ADDRESS>/`.
+6. The GUI retrieves drawings over DBus and can export to SVG or PNG.
+
+### Data Storage
+
+```
+~/.local/share/tuhi/
+└── <BT_ADDRESS>/
+    ├── settings.ini          Device UUID + protocol version
+    ├── <timestamp>.json      Drawing data (strokes, points, pressure)
+    └── raw/
+        └── log-*.yaml        BLE communication logs (for debugging)
+```
 
 License
 -------
