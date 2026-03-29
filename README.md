@@ -280,14 +280,6 @@ opcodes per protocol version).
 Registration and usage are identical to the Bamboo Slate (see
 "Registering devices" below).
 
-Cross-Currency Support
-----------------------
-
-**Note:** Tuhi is a drawing/ink application for Wacom SmartPad devices. It does
-not include any cross-currency or financial functionality. If you are looking
-for currency conversion or multi-currency features, those are outside the scope
-of this project.
-
 Architecture
 ------------
 
