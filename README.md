@@ -162,6 +162,23 @@ Use `--config-dir` to override the default data/config location:
  $> ./builddir/tuhi.devel --config-dir /tmp/tuhi-debug
 ```
 
+### Cached UUID for testing
+
+During registration, Tuhi generates a UUID and sends it to the device. To
+avoid re-registering with the device on every test run, the UUID is cached
+to a local file:
+
+```
+~/.local/share/tuhi/cached_uuid.txt
+```
+
+On subsequent registrations, Tuhi reuses the cached UUID instead of
+generating a new one. To force a fresh UUID, delete the file:
+
+```
+ $> rm ~/.local/share/tuhi/cached_uuid.txt
+```
+
 ### Debugging tools
 
 | Tool                          | Purpose                                         |

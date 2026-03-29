@@ -938,8 +938,26 @@ class WacomDevice(GObject.Object):
     def sync_state(self, state):
         self._sync_state = state
 
+    def _load_or_generate_uuid(self):
+        '''Load a cached UUID from disk, or generate a new one and save it.
+        This avoids generating a new UUID on every registration, which is
+        useful during testing to skip re-registering with the device.'''
+        uuid_file = Path(TuhiConfig().log_dir, 'cached_uuid.txt')
+        if uuid_file.is_file():
+            cached = uuid_file.read_text().strip()
+            if len(cached) == 12:
+                logger.debug(f'{self._device.address}: reusing cached UUID from {uuid_file}')
+                return cached
+            logger.warning(f'{self._device.address}: invalid cached UUID, generating new one')
+
+        new_uuid = uuid.uuid4().hex[:12]
+        uuid_file.parent.mkdir(parents=True, exist_ok=True)
+        uuid_file.write_text(new_uuid)
+        logger.debug(f'{self._device.address}: generated and cached new UUID to {uuid_file}')
+        return new_uuid
+
     def register_device(self):
-        self._uuid = uuid.uuid4().hex[:12]
+        self._uuid = self._load_or_generate_uuid()
         logger.debug(f'{self._device.address}: registering device, assigned {self.uuid}')
 
         wp = WacomRegisterHelper(self._device)
