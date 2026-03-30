@@ -71,10 +71,9 @@ def cmd_search(args):
                 break
     except KeyboardInterrupt:
         pass
-    finally:
-        mgr.stop_search()
 
     if not found:
+        mgr.stop_search()
         print('No devices found.')
         return 1
 
@@ -83,8 +82,11 @@ def cmd_search(args):
         print(f'\nRegistering {dev.address}...')
         print('Press the button on your device when prompted.')
         dev.register()
-        time.sleep(5)
+        mgr.stop_search()
+        time.sleep(30)
         print('Registration complete (check server log for details).')
+    else:
+        mgr.stop_search()
 
     return 0
 

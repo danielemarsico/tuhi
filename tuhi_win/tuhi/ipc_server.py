@@ -40,6 +40,7 @@ class TuhiIPCDevice(Object):
         self.width, self.height = device.dimensions
         self.drawings = {}
         self._registered = device.registered
+        self._is_registering = False
         self._listening = False
         self._listening_client = None
         self._live = False
@@ -100,7 +101,10 @@ class TuhiIPCDevice(Object):
 
     @registered.setter
     def registered(self, value):
+        if self._registered == value:
+            return
         self._registered = value
+        self.notify('registered')
 
     @Property
     def battery_percent(self):
@@ -174,6 +178,7 @@ class TuhiIPCDevice(Object):
     def handle_method(self, method, args):
         """Handle an IPC method call for this device."""
         if method == 'Register':
+            self._is_registering = True
             self.emit('register-requested')
             return {'result': 0}
         elif method == 'StartListening':
@@ -451,9 +456,7 @@ class TuhiIPCServer(Object):
         self.emit('search-start-requested', self._on_search_stop)
         for d in self._devices:
             if not d.registered:
-                self.broadcast_event('unregistered_device', {
-                    'device_id': d.device_id
-                })
+                self.broadcast_event('unregistered_device', d._get_properties())
 
     def _stop_search(self):
         if not self.is_searching:
@@ -467,10 +470,10 @@ class TuhiIPCServer(Object):
         self.broadcast_event('search_stopped', {'status': status})
 
         for dev in self._devices:
-            if dev.registered:
+            if dev.registered or dev._is_registering:
                 continue
             dev.remove()
-        self._devices = [d for d in self._devices if d.registered]
+        self._devices = [d for d in self._devices if d.registered or d._is_registering]
 
     def cleanup(self):
         if self._server_socket:
@@ -481,9 +484,7 @@ class TuhiIPCServer(Object):
         dev.connect('notify::registered', self._on_device_registered)
         self._devices.append(dev)
         if not device.registered:
-            self.broadcast_event('unregistered_device', {
-                'device_id': dev.device_id
-            })
+            self.broadcast_event('unregistered_device', dev._get_properties())
         return dev
 
     def _on_device_registered(self, device, param):
@@ -493,6 +494,4 @@ class TuhiIPCServer(Object):
         })
 
         if not device.registered and self._is_searching:
-            self.broadcast_event('unregistered_device', {
-                'device_id': device.device_id
-            })
+            self.broadcast_event('unregistered_device', device._get_properties())

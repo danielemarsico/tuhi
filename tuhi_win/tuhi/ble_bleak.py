@@ -25,6 +25,7 @@ class BleakCharacteristic:
         self._client = client
         self._characteristic = characteristic
         self._property_callbacks = {}
+        self._notifying = False
 
     @property
     def uuid(self):
@@ -35,6 +36,8 @@ class BleakCharacteristic:
 
     def start_notify(self):
         """Start notifications on this characteristic."""
+        if self._notifying:
+            return
         loop = self._client._loop
         asyncio.run_coroutine_threadsafe(
             self._client._bleak_client.start_notify(
@@ -43,6 +46,7 @@ class BleakCharacteristic:
             ),
             loop
         ).result(timeout=10)
+        self._notifying = True
 
     def write_value(self, data):
         """Write data to this characteristic."""
@@ -80,9 +84,10 @@ class BleakBLEDevice(Object):
         'updated': (1, None, ()),
     }
 
-    def __init__(self, scanner_device, loop):
+    def __init__(self, scanner_device, advertisement_data, loop):
         Object.__init__(self)
         self._scanner_device = scanner_device
+        self._advertisement_data = advertisement_data
         self._loop = loop
         self._bleak_client = None
         self._connected = False
@@ -104,15 +109,16 @@ class BleakBLEDevice(Object):
 
     @Property
     def uuids(self):
-        md = self._scanner_device.metadata
-        return md.get('uuids', [])
+        if self._advertisement_data is not None:
+            return list(self._advertisement_data.service_uuids)
+        return []
 
     @Property
     def vendor_id(self):
-        md = self._scanner_device.metadata
-        mfr_data = md.get('manufacturer_data', {})
-        if mfr_data:
-            return next(iter(mfr_data.keys()), None)
+        if self._advertisement_data is not None:
+            mfr_data = self._advertisement_data.manufacturer_data
+            if mfr_data:
+                return next(iter(mfr_data.keys()), None)
         return None
 
     @Property
@@ -121,10 +127,10 @@ class BleakBLEDevice(Object):
 
     @Property
     def manufacturer_data(self):
-        md = self._scanner_device.metadata
-        mfr_data = md.get('manufacturer_data', {})
-        if mfr_data:
-            return next(iter(mfr_data.values()), None)
+        if self._advertisement_data is not None:
+            mfr_data = self._advertisement_data.manufacturer_data
+            if mfr_data:
+                return next(iter(mfr_data.values()), None)
         return None
 
     def connect_device(self):
@@ -162,7 +168,7 @@ class BleakBLEDevice(Object):
                     self.logger.debug(f'GattCharacteristic: {uuid}')
 
         self._connected = True
-        self.emit('connected')
+        threading.Thread(target=self.emit, args=('connected',), daemon=True).start()
 
     def _on_disconnected(self, client):
         self._connected = False
@@ -194,9 +200,10 @@ class BleakBLEDevice(Object):
         except KeyError:
             pass
 
-    def update_scanner_device(self, scanner_device):
+    def update_scanner_device(self, scanner_device, advertisement_data):
         """Update the underlying scanner device data (during discovery)."""
         self._scanner_device = scanner_device
+        self._advertisement_data = advertisement_data
         self.emit('updated')
 
     def __repr__(self):
@@ -243,12 +250,12 @@ class BleakDeviceManager(Object):
             # Update existing device
             for d in self.devices:
                 if d.address == device.address:
-                    d.update_scanner_device(device)
+                    d.update_scanner_device(device, advertisement_data)
                     self.emit('device-updated', d)
                     return
 
         self._known_addresses.add(device.address)
-        dev = BleakBLEDevice(device, self._loop)
+        dev = BleakBLEDevice(device, advertisement_data, self._loop)
         self.devices.append(dev)
         self.emit('device-added', dev)
 

@@ -142,7 +142,7 @@ class DataLogger:
         self.logger = logging.getLogger('tuhi.fw')
         self.device = bluez_device
         self.btaddr = bluez_device.address
-        self.logdir = Path(TuhiConfig().log_dir, self.btaddr, 'raw')
+        self.logdir = Path(TuhiConfig().log_dir, self.btaddr.replace(':', '_'), 'raw')
         self.logdir.mkdir(parents=True, exist_ok=True)
 
         bluez_device.connect('connected', self._on_bluez_connected)

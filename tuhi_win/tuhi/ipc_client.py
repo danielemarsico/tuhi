@@ -360,14 +360,9 @@ class TuhiIPCClientManager(Object):
     def _on_event(self, event_type, data):
         if event_type == 'unregistered_device':
             device_id = data.get('device_id', '')
-            # Fetch device properties
-            try:
-                resp = self._conn.call('Device.GetProperties', {'device_id': device_id})
-                dev = TuhiIPCClientDevice(self, resp)
-                self._unregistered_devices[device_id] = dev
-                self.emit('unregistered-device', dev)
-            except IPCError:
-                pass
+            dev = TuhiIPCClientDevice(self, data)
+            self._unregistered_devices[device_id] = dev
+            self.emit('unregistered-device', dev)
 
         elif event_type == 'search_stopped':
             self.notify('searching')
@@ -375,14 +370,19 @@ class TuhiIPCClientManager(Object):
         elif event_type == 'manager_property_changed':
             prop = data.get('property', '')
             if prop == 'Devices':
-                # Refresh device list
-                resp = self._conn.call('GetAllDevices')
-                for dev_props in resp.get('devices', []):
-                    addr = dev_props.get('address', '')
-                    if dev_props.get('registered') and addr not in self._devices:
-                        device = TuhiIPCClientDevice(self, dev_props)
-                        self._devices[device.address] = device
-                self.notify('devices')
+                # Refresh device list off the listener thread to avoid deadlock
+                def _refresh():
+                    try:
+                        resp = self._conn.call('GetAllDevices')
+                        for dev_props in resp.get('devices', []):
+                            addr = dev_props.get('address', '')
+                            if dev_props.get('registered') and addr not in self._devices:
+                                device = TuhiIPCClientDevice(self, dev_props)
+                                self._devices[device.address] = device
+                        self.notify('devices')
+                    except IPCError:
+                        pass
+                threading.Thread(target=_refresh, daemon=True).start()
             elif prop == 'Searching':
                 self.notify('searching')
 

@@ -37,6 +37,11 @@ def is_btaddr(addr):
     return re.match('^([0-9A-F]{2}[:-]){5}([0-9A-F]{2})$', addr) is not None
 
 
+def _addr_to_dir(address):
+    """Convert a BT address to a safe directory name (replace : with _)."""
+    return address.replace(':', '_')
+
+
 class TuhiConfig(Object):
     _instance = None
     _base_path = None
@@ -66,7 +71,7 @@ class TuhiConfig(Object):
 
     def _scan_config_dir(self):
         dirs = [d for d in Path(self._base_path).iterdir()
-                if d.is_dir() and is_btaddr(d.name)]
+                if d.is_dir() and is_btaddr(d.name.replace('_', ':'))]
         for directory in dirs:
             settings = Path(directory, 'settings.ini')
             if not settings.is_file():
@@ -76,8 +81,7 @@ class TuhiConfig(Object):
             config = configparser.ConfigParser()
             config.read(settings)
 
-            btaddr = directory.name
-            assert config['Device']['Address'] == btaddr
+            btaddr = config['Device']['Address']
             if 'Protocol' not in config['Device']:
                 config['Device']['Protocol'] = ProtocolVersion.ANY.name.lower()
             self._devices[btaddr] = config['Device']
@@ -88,7 +92,7 @@ class TuhiConfig(Object):
         assert protocol != ProtocolVersion.ANY
 
         logger.debug(f'{address}: adding new config, UUID {uuid}')
-        path = Path(self._base_path, address)
+        path = Path(self._base_path, _addr_to_dir(address))
         path.mkdir(exist_ok=True)
 
         path = Path(path, 'settings.ini')
@@ -118,7 +122,7 @@ class TuhiConfig(Object):
             return
 
         logger.debug(f'{address}: adding new drawing, timestamp {drawing.timestamp}')
-        path = Path(self._base_path, address, f'{drawing.timestamp}.json')
+        path = Path(self._base_path, _addr_to_dir(address), f'{drawing.timestamp}.json')
 
         with open(path, 'w') as f:
             f.write(drawing.to_json())
@@ -129,7 +133,7 @@ class TuhiConfig(Object):
         if address not in self.devices:
             return []
 
-        configdir = Path(self._base_path, address)
+        configdir = Path(self._base_path, _addr_to_dir(address))
         return [Drawing.from_json(f) for f in configdir.glob('*.json')]
 
     @classmethod
