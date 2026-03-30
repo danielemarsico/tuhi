@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''tuhi/gobject_compat.py'', doraise=True\\); print\\(''gobject_compat OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''tuhi/ble_bleak.py'', doraise=True\\); print\\(''ble_bleak OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''tuhi/uhid_win.py'', doraise=True\\); print\\(''uhid_win OK''\\)\")",
+      "Bash(python -c \"import py_compile; [py_compile.compile\\(f''tuhi/{f}'', doraise=True\\) for f in [''ipc_server.py'', ''ipc_client.py'', ''config_win.py'', ''drawing_win.py'', ''wacom_win.py'', ''base_win.py'', ''export_win.py'']]; print\\(''All OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''tuhi_windows.py'', doraise=True\\); py_compile.compile\\(''tuhi_cli.py'', doraise=True\\); print\\(''Entry points OK''\\)\")",
+      "Bash(python -c \":*)",
+      "Bash(pip install:*)",
+      "Bash(python -m pytest test/ -v)",
+      "Bash(python -m py_compile test/test_messages.py)",
+      "Bash(python -m py_compile test/test_strokes.py)"
+    ]
+  }
+}
