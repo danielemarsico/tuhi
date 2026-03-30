@@ -317,7 +317,7 @@ class Tuhi(Object):
                 return
             uuid = None
 
-        if from_live_update and len(bluez_device.manufacturer_data or []) == 4:
+        if uuid is None and from_live_update and len(bluez_device.manufacturer_data or []) == 4:
             mode = DeviceMode.REGISTER
         else:
             mode = DeviceMode.LISTEN
