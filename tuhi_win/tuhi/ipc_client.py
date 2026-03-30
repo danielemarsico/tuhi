@@ -8,7 +8,7 @@ import json
 import logging
 import socket
 import threading
-from tuhi_win.tuhi.gobject_compat import Object, Property, timeout_add_seconds, TYPE_PYOBJECT
+from tuhi.gobject_compat import Object, Property, timeout_add_seconds, TYPE_PYOBJECT
 
 logger = logging.getLogger('tuhi.ipc_client')
 

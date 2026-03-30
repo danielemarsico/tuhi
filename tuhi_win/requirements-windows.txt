@@ -1,0 +1,14 @@
+# Requirements for running Tuhi on Windows
+#
+# Install with: pip install -r requirements-windows.txt
+
+# BLE communication (replaces BlueZ)
+bleak>=0.21.0
+
+# SVG export
+svgwrite
+
+# PNG export (replaces pycairo)
+Pillow
+
+# Python 3.12+ required
