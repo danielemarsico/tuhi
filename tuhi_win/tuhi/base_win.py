@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 #
-#  Windows-compatible Tuhi orchestrator.
-#  Replaces base.py, using gobject_compat, bleak BLE, and IPC server
-#  instead of GObject/GLib, BlueZ, and D-Bus.
+#  tuhi/base_win.py — Core device glue for the Windows port.
+#
+#  Contains TuhiDevice: the object that binds a BleakBLEDevice to its
+#  AppDevice (in-process state) and drives the Wacom protocol state machine.
+#
+#  The old Tuhi orchestrator class (which required an IPC server) has been
+#  replaced by TuhiApp in app.py.
 #
 
 import argparse
@@ -13,8 +17,7 @@ import time
 import threading
 from pathlib import Path
 
-from tuhi.gobject_compat import Object, Property, timeout_add_seconds, source_remove, TYPE_PYOBJECT
-from tuhi.ipc_server import TuhiIPCServer
+from tuhi.gobject_compat import Object, Property, TYPE_PYOBJECT
 from tuhi.ble_bleak import BleakDeviceManager
 from tuhi.wacom_win import WacomDevice, DeviceMode
 from tuhi.config_win import TuhiConfig, get_default_data_dir
@@ -27,10 +30,14 @@ WACOM_COMPANY_IDS = [0x4755, 0x4157, 0x424d]
 
 
 class TuhiDevice(Object):
-    '''
-    Glue object to combine the backend BLE device with the frontend
-    IPC server device.
-    '''
+    """
+    Glue object that binds a BleakBLEDevice to its in-process AppDevice and
+    drives the Wacom protocol state machine.
+
+    The 'dbus_device' slot accepts any object that satisfies the AppDevice
+    interface (signals: register-requested, notify::listening, notify::live;
+    methods: add_drawing(), notify_button_press_required(); property: uhid_fd).
+    """
 
     class BatteryState(enum.Enum):
         UNKNOWN = 0
@@ -41,8 +48,6 @@ class TuhiDevice(Object):
         'device-error': (1, None, (TYPE_PYOBJECT,)),
     }
 
-    BATTERY_UPDATE_MIN_INTERVAL = 300
-
     def __init__(self, bluez_device, config, uuid=None, mode=DeviceMode.LISTEN):
         Object.__init__(self)
         self.config = config
@@ -51,8 +56,6 @@ class TuhiDevice(Object):
         self._mode = mode
         self._battery_state = TuhiDevice.BatteryState.UNKNOWN
         self._battery_percent = 0
-        self._last_battery_update_time = 0
-        self._battery_timer_source = None
         self._signals = {'connected': None, 'disconnected': None}
         self._bluez_device = bluez_device
         self._tuhi_dbus_device = None
@@ -212,7 +215,8 @@ class TuhiDevice(Object):
         self._tuhi_dbus_device.notify_button_press_required()
 
     def _on_uuid_updated(self, wacom_device, pspec, bluez_device):
-        self.config.new_device(bluez_device.address, wacom_device.uuid, wacom_device.protocol)
+        self.config.new_device(bluez_device.address, wacom_device.uuid, wacom_device.protocol,
+                               name=bluez_device.name)
         self.mode = DeviceMode.LISTEN
 
     def _on_listening_updated(self, dbus_device, pspec):
@@ -226,131 +230,10 @@ class TuhiDevice(Object):
                 self._wacom_device.stop_live()
 
     def _on_battery_status(self, wacom_device, percent, is_charging, bluez_device):
-        if is_charging:
-            self.battery_state = TuhiDevice.BatteryState.CHARGING
-        else:
-            self.battery_state = TuhiDevice.BatteryState.DISCHARGING
+        # Fetch once on connect; no cross-invocation timer in single-process mode.
+        self.battery_state = (TuhiDevice.BatteryState.CHARGING
+                              if is_charging else TuhiDevice.BatteryState.DISCHARGING)
         self.battery_percent = percent
-
-        if self._battery_timer_source is not None:
-            source_remove(self._battery_timer_source)
-        self._battery_timer_source = timeout_add_seconds(
-            self.BATTERY_UPDATE_MIN_INTERVAL, self._on_battery_timeout)
-        self._last_battery_update_time = time.time()
-
-    def _on_battery_timeout(self):
-        if self._last_battery_update_time < time.time() - self.BATTERY_UPDATE_MIN_INTERVAL:
-            self.battery_state = TuhiDevice.BatteryState.UNKNOWN
-        self._battery_timer_source = None
-        return False
-
-
-class Tuhi(Object):
-    '''
-    Main entry point and glue object between BLE backend and IPC server.
-    '''
-    __gsignals__ = {
-        'device-added': (1, None, (TYPE_PYOBJECT,)),
-        'device-connected': (1, None, (TYPE_PYOBJECT,)),
-        'terminate': (1, None, ()),
-    }
-
-    def __init__(self, config_dir=None):
-        Object.__init__(self)
-        self.server = TuhiIPCServer()
-        self.server.connect('bus-name-acquired', self._on_tuhi_bus_name_acquired)
-        self.server.connect('bus-name-lost', self._on_tuhi_bus_name_lost)
-        self.server.connect('search-start-requested', self._on_start_search_requested)
-        self.server.connect('search-stop-requested', self._on_stop_search_requested)
-        self.bluez = BleakDeviceManager()
-        self.bluez.connect('discovery-started', self._on_bluez_discovery_started)
-        self.bluez.connect('discovery-stopped', self._on_bluez_discovery_stopped)
-
-        self.config = TuhiConfig()
-        self.devices = {}
-        self._search_stop_handler = None
-
-    def _on_tuhi_bus_name_acquired(self, dbus_server):
-        self.bluez.connect_to_bluez()
-        for dev in self.bluez.devices:
-            self._add_device(self.bluez, dev)
-
-        self.bluez.connect('device-added',
-                           lambda mgr, dev: self._add_device(mgr, dev, True))
-        self.bluez.connect('device-updated',
-                           lambda mgr, dev: self._add_device(mgr, dev, True))
-
-    def _on_tuhi_bus_name_lost(self, dbus_server):
-        self.emit('terminate')
-
-    def _on_start_search_requested(self, dbus_server, stop_handler):
-        self._search_stop_handler = stop_handler
-        self.bluez.start_discovery()
-
-    def _on_stop_search_requested(self, dbus_server):
-        self._search_stop_handler(0)
-        self._search_stop_handler = None
-        self.bluez.stop_discovery()
-
-        unregistered = [addr for (addr, d) in self.devices.items() if not d.registered]
-        for addr in unregistered:
-            del self.devices[addr]
-
-    def _on_bluez_discovery_started(self, manager):
-        if not self._search_stop_handler:
-            return
-
-    def _on_bluez_discovery_stopped(self, manager):
-        if self._search_stop_handler is not None:
-            self._search_stop_handler(0)
-        self._on_listening_updated(None, None)
-
-    def _add_device(self, manager, bluez_device, from_live_update=False):
-        if bluez_device.vendor_id is not None and bluez_device.vendor_id not in WACOM_COMPANY_IDS:
-            return
-
-        try:
-            config = self.config.devices[bluez_device.address]
-            uuid = config['uuid']
-        except KeyError:
-            if bluez_device.vendor_id is None:
-                return
-            uuid = None
-
-        if uuid is None and from_live_update and len(bluez_device.manufacturer_data or []) == 4:
-            mode = DeviceMode.REGISTER
-        else:
-            mode = DeviceMode.LISTEN
-            if uuid is None:
-                logger.info(f'{bluez_device.address}: device without config, must be registered first')
-                return
-            logger.debug(f'{bluez_device.address}: UUID {uuid} protocol: {config["Protocol"]}')
-
-        if bluez_device.address not in self.devices:
-            d = TuhiDevice(bluez_device, self.config, uuid, mode)
-            d.dbus_device = self.server.create_device(d)
-            d.connect('notify::listening', self._on_listening_updated)
-            self.devices[bluez_device.address] = d
-
-        d = self.devices[bluez_device.address]
-
-        if mode == DeviceMode.REGISTER:
-            d.mode = mode
-            logger.debug(f'{bluez_device.address}: call Register() on device')
-        elif d.listening:
-            d.listen()
-
-    def _on_listening_updated(self, tuhi_dbus_device, pspec):
-        listen = self._search_stop_handler is not None
-        for dev in self.devices.values():
-            if dev.listening:
-                listen = True
-                break
-
-        if listen:
-            self.bluez.start_discovery()
-        else:
-            self.bluez.stop_discovery()
 
 
 def setup_logging(config_dir):
@@ -372,45 +255,3 @@ def setup_logging(config_dir):
     logger.addHandler(ch)
     logger.addHandler(fh)
     logger.info(f'Session log: {session_log_file}')
-
-
-def main(args=sys.argv):
-    if sys.version_info < (3, 12):
-        sys.exit('Python 3.12 or later required')
-
-    desc = 'Daemon to extract pen stroke data from Wacom SmartPad devices (Windows)'
-    parser = argparse.ArgumentParser(description=desc)
-    parser.add_argument('-v', '--verbose',
-                        help='Show debugging information',
-                        action='store_true',
-                        default=False)
-    parser.add_argument('--config-dir',
-                        help='Base directory for configuration',
-                        type=str,
-                        default=DEFAULT_CONFIG_PATH)
-    parser.add_argument('--peek',
-                        help='Download first drawing only but do not remove it from device',
-                        action='store_true',
-                        default=False)
-
-    ns = parser.parse_args(args[1:])
-    TuhiConfig.set_base_path(ns.config_dir)
-    TuhiConfig().peek_at_drawing = ns.peek
-    setup_logging(ns.config_dir)
-
-    if ns.verbose:
-        logger.setLevel(logging.DEBUG)
-    else:
-        logger.setLevel(logging.INFO)
-
-    try:
-        tuhi = Tuhi(config_dir=ns.config_dir)
-        logger.info('Tuhi Windows server running. Press Ctrl+C to exit.')
-        logger.info(f'IPC server on 127.0.0.1:48150')
-
-        # Keep the main thread alive (replaces GLib.MainLoop)
-        stop_event = threading.Event()
-        tuhi.connect('terminate', lambda t: stop_event.set())
-        stop_event.wait()
-    except KeyboardInterrupt:
-        logger.info('Shutting down...')

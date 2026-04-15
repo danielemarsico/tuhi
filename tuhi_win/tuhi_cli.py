@@ -1,181 +1,203 @@
 #!/usr/bin/env python3
 #
-#  Tuhi CLI client for Windows.
-#  Connects to the Tuhi IPC server and provides device management
-#  via command-line (replaces tuhi-gui which requires GTK).
+#  Tuhi CLI for Windows — single-process edition.
+#
+#  Each command creates a TuhiApp, calls start(), does its work, then
+#  calls stop().  No IPC server required.
 #
 #  Usage:
-#    python tuhi_cli.py list         - List registered devices
-#    python tuhi_cli.py search       - Search for unregistered devices
-#    python tuhi_cli.py listen ADDR  - Start listening on a device
-#    python tuhi_cli.py fetch ADDR   - Fetch and export drawings
+#    python tuhi_cli.py list
+#    python tuhi_cli.py search [--register] [--timeout N]
+#    python tuhi_cli.py listen  XX:XX:XX:XX:XX:XX
+#    python tuhi_cli.py fetch   XX:XX:XX:XX:XX:XX [--svg] [--orientation ...]
 #
 
 import argparse
 import json
+import logging
 import sys
 import time
 
-from tuhi.ipc_client import TuhiIPCClientManager, IPCError
+# Ensure the tuhi package inside tuhi_win is importable when running from
+# any working directory.
+import os
+sys.path.insert(0, os.path.dirname(__file__))
 
+from tuhi.app import TuhiApp
+from tuhi.config_win import get_default_data_dir, TuhiConfig
+
+logger = logging.getLogger('tuhi')
+
+
+def _make_app(args):
+    """Create and start a TuhiApp from parsed CLI args."""
+    config_dir = getattr(args, 'config_dir', None) or get_default_data_dir()
+    TuhiConfig.set_base_path(config_dir)
+    app = TuhiApp()
+    app.start()
+    return app
+
+
+# ------------------------------------------------------------------ #
+# Commands                                                             #
+# ------------------------------------------------------------------ #
 
 def cmd_list(args):
-    """List registered devices."""
-    try:
-        mgr = TuhiIPCClientManager()
-    except Exception as e:
-        print(f'Error: Cannot connect to Tuhi server: {e}')
-        print('Make sure tuhi_windows.py is running.')
-        return 1
+    """List registered devices (reads config + drawings from disk)."""
+    app = _make_app(args)
+    devices = app.list_devices()
+    app.stop()
 
-    if not mgr.devices:
+    if not devices:
         print('No registered devices.')
         return 0
 
-    for dev in mgr.devices:
-        print(f'  {dev.address}  {dev.name}')
-        print(f'    Battery: {dev.battery_percent}%')
-        dims = dev.dimensions
+    for d in devices:
+        print(f"  {d['address']}  {d['name']}")
+        drawings = d['drawings'] or []
+        print(f"    Drawings: {len(drawings)}")
+        dims = d['dimensions']
         if dims and dims != (0, 0):
-            print(f'    Dimensions: {dims[0]/1000:.0f}x{dims[1]/1000:.0f} mm')
-        drawings = dev.drawings_available or []
-        print(f'    Drawings: {len(drawings)}')
+            print(f"    Dimensions: {dims[0]/1000:.0f}x{dims[1]/1000:.0f} mm")
     return 0
 
 
 def cmd_search(args):
-    """Search for unregistered devices."""
-    try:
-        mgr = TuhiIPCClientManager()
-    except Exception as e:
-        print(f'Error: Cannot connect to Tuhi server: {e}')
-        return 1
+    """Search for unregistered devices; optionally register the first one found."""
+    app = _make_app(args)
 
-    print('Searching for devices... (press Ctrl+C to stop)')
-    print('Put your device in pairing mode (hold button for 6 seconds)')
+    print('Searching for devices...')
+    print('Put your device in pairing mode (hold the button for ~6 seconds).')
+    print('Press Ctrl+C to stop early.\n')
 
     found = []
 
-    def on_unregistered(manager, device):
-        found.append(device)
-        print(f'  Found: {device.address} - {device.name}')
+    def on_found(address, name):
+        found.append((address, name))
+        print(f'  Found: {address}  {name}')
 
-    mgr.connect('unregistered-device', on_unregistered)
-    mgr.start_search()
-
-    try:
-        timeout = args.timeout or 30
-        for i in range(timeout):
-            time.sleep(1)
-            if found:
-                break
-    except KeyboardInterrupt:
-        pass
+    timeout = args.timeout if args.timeout else 30
+    app.search(
+        timeout=timeout,
+        on_found=on_found,
+        stop_early=bool(args.register),
+    )
 
     if not found:
-        mgr.stop_search()
         print('No devices found.')
+        app.stop()
         return 1
 
     if args.register:
-        dev = found[0]
-        print(f'\nRegistering {dev.address}...')
-        print('Press the button on your device when prompted.')
-        dev.register()
-        mgr.stop_search()
-        time.sleep(30)
-        print('Registration complete (check server log for details).')
-    else:
-        mgr.stop_search()
+        address, name = found[0]
+        print(f'\nRegistering {name} ({address})...')
 
+        def on_button_press():
+            print('  [Please press the button on your device now]')
+
+        try:
+            app.register(address, on_button_press=on_button_press, timeout=60)
+            print('Registration complete.')
+        except KeyError as e:
+            print(f'Error: {e}')
+            app.stop()
+            return 1
+
+    app.stop()
     return 0
 
 
 def cmd_listen(args):
-    """Start listening for drawings from a device."""
-    try:
-        mgr = TuhiIPCClientManager()
-    except Exception as e:
-        print(f'Error: Cannot connect to Tuhi server: {e}')
+    """Connect to a registered device and wait for drawings (synced on button press)."""
+    address = args.address.upper()
+    app = _make_app(args)
+
+    if address not in app.config.devices:
+        print(f'Error: {address} is not registered. Use "list" to see registered devices.')
+        app.stop()
         return 1
 
-    addr = args.address.upper()
-    try:
-        dev = mgr[addr]
-    except KeyError:
-        print(f'Error: Device {addr} not found. Use "list" to see registered devices.')
-        return 1
-
-    print(f'Listening on {dev.name} ({addr})...')
+    print(f'Listening on {address}...')
     print('Press the button on your device to sync drawings.')
+    print('Press Ctrl+C to stop.\n')
 
-    def on_drawings(device, pspec):
-        drawings = device.drawings_available or []
-        print(f'  Drawings available: {len(drawings)}')
+    def on_drawings(app_dev):
+        drawings = sorted(app_dev.drawings.keys())
+        print(f'  {len(drawings)} drawing(s) available:')
         for ts in drawings:
             t = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))
             print(f'    {ts} ({t})')
 
-    dev.connect('notify::drawings-available', on_drawings)
-    dev.start_listening()
+    app.start_listening(address, on_drawings=on_drawings)
 
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        dev.stop_listening()
+        app.stop_listening(address)
         print('\nStopped listening.')
 
+    app.stop()
     return 0
 
 
 def cmd_fetch(args):
-    """Fetch drawings from a device and export."""
-    try:
-        mgr = TuhiIPCClientManager()
-    except Exception as e:
-        print(f'Error: Cannot connect to Tuhi server: {e}')
+    """Download stored drawings from a device and export as JSON (optionally SVG)."""
+    address = args.address.upper()
+    app = _make_app(args)
+
+    if address not in app.config.devices:
+        print(f'Error: {address} is not registered.')
+        app.stop()
         return 1
 
-    addr = args.address.upper()
-    try:
-        dev = mgr[addr]
-    except KeyError:
-        print(f'Error: Device {addr} not found.')
-        return 1
+    drawings = app.config.load_drawings(address)
+    app.stop()
 
-    drawings = dev.drawings_available or []
     if not drawings:
-        print('No drawings available.')
+        print('No drawings available. Use "listen" to sync drawings first.')
         return 0
 
     print(f'Found {len(drawings)} drawing(s):')
-    for ts in drawings:
+    for drawing in sorted(drawings, key=lambda d: d.timestamp):
+        ts = drawing.timestamp
         t = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))
-        json_data = dev.json(ts)
-        if json_data:
-            outfile = f'drawing_{ts}.json'
-            with open(outfile, 'w') as f:
-                f.write(json_data)
-            print(f'  Saved: {outfile} ({t})')
+        json_data = drawing.to_json()
 
-            # Export to SVG if requested
-            if args.svg:
-                try:
-                    from tuhi.export_win import JsonSvg
-                    parsed = json.loads(json_data)
-                    svg_file = f'drawing_{ts}.svg'
-                    JsonSvg(parsed, args.orientation or 'landscape', svg_file)
-                    print(f'  SVG:   {svg_file}')
-                except Exception as e:
-                    print(f'  SVG export failed: {e}')
+        outfile = f'drawing_{ts}.json'
+        with open(outfile, 'w') as f:
+            f.write(json_data)
+        print(f'  Saved: {outfile} ({t})')
+
+        if args.svg:
+            try:
+                from tuhi.export_win import JsonSvg
+                parsed = json.loads(json_data)
+                svg_file = f'drawing_{ts}.svg'
+                orientation = getattr(args, 'orientation', None) or 'landscape'
+                JsonSvg(parsed, orientation, svg_file)
+                print(f'  SVG:   {svg_file}')
+            except Exception as e:
+                print(f'  SVG export failed: {e}')
 
     return 0
 
 
+# ------------------------------------------------------------------ #
+# Entry point                                                          #
+# ------------------------------------------------------------------ #
+
 def main():
     parser = argparse.ArgumentParser(
-        description='Tuhi CLI client for Windows')
+        description='Tuhi CLI — Wacom SmartPad drawing sync (single-process)')
+    parser.add_argument('--config-dir',
+                        help='Base directory for configuration',
+                        default=None)
+    parser.add_argument('-v', '--verbose',
+                        help='Show debug logging',
+                        action='store_true',
+                        default=False)
+
     sub = parser.add_subparsers(dest='command')
 
     # list
@@ -184,23 +206,31 @@ def main():
     # search
     sp = sub.add_parser('search', help='Search for unregistered devices')
     sp.add_argument('--register', action='store_true',
-                    help='Automatically register the first found device')
+                    help='Register the first found device automatically')
     sp.add_argument('--timeout', type=int, default=30,
                     help='Search timeout in seconds (default: 30)')
 
     # listen
-    sp = sub.add_parser('listen', help='Listen for drawings from a device')
+    sp = sub.add_parser('listen', help='Listen for drawings from a registered device')
     sp.add_argument('address', help='Bluetooth address (XX:XX:XX:XX:XX:XX)')
 
     # fetch
-    sp = sub.add_parser('fetch', help='Fetch and export drawings')
+    sp = sub.add_parser('fetch', help='Export stored drawings to JSON (and optionally SVG)')
     sp.add_argument('address', help='Bluetooth address (XX:XX:XX:XX:XX:XX)')
-    sp.add_argument('--svg', action='store_true', help='Export as SVG')
-    sp.add_argument('--orientation', choices=['landscape', 'portrait',
-                    'reverse-landscape', 'reverse-portrait'],
-                    default='landscape', help='Drawing orientation')
+    sp.add_argument('--svg', action='store_true', help='Also export as SVG')
+    sp.add_argument('--orientation',
+                    choices=['landscape', 'portrait',
+                             'reverse-landscape', 'reverse-portrait'],
+                    default='landscape',
+                    help='Drawing orientation for SVG export')
 
     args = parser.parse_args()
+
+    logging.basicConfig(
+        format='%(asctime)s %(levelname)s: %(name)s: %(message)s',
+        datefmt='%H:%M:%S',
+        level=logging.DEBUG if args.verbose else logging.WARNING,
+    )
 
     if args.command is None:
         parser.print_help()

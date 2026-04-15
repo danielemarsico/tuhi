@@ -10,7 +10,13 @@
       "Bash(pip install:*)",
       "Bash(python -m pytest test/ -v)",
       "Bash(python -m py_compile test/test_messages.py)",
-      "Bash(python -m py_compile test/test_strokes.py)"
+      "Bash(python -m py_compile test/test_strokes.py)",
+      "Bash(python -m venv .venv)",
+      "Bash(.venv/Scripts/pip install *)",
+      "Bash(.venv/Scripts/python -c ' *)",
+      "Bash(.venv/Scripts/python tuhi_cli.py --help)",
+      "Bash(.venv/Scripts/python tuhi_cli.py list)",
+      "Bash(python -c ' *)"
     ]
   }
 }

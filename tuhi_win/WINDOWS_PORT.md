@@ -11,88 +11,74 @@ preserved unchanged.
 | Linux Component | Windows Replacement | File |
 |---|---|---|
 | BlueZ (BLE) | bleak library | `tuhi/ble_bleak.py` |
-| D-Bus (IPC) | JSON-RPC over TCP | `tuhi/ipc_server.py`, `tuhi/ipc_client.py` |
+| D-Bus (IPC) | Direct in-process calls | `tuhi/app.py` |
 | UHID (/dev/uhid) | Logging stub | `tuhi/uhid_win.py` |
 | GObject/GLib | Custom signal system | `tuhi/gobject_compat.py` |
 | XDG directories | %APPDATA%/tuhi | `tuhi/config_win.py` |
 | pycairo (PNG) | Pillow | `tuhi/export_win.py` |
 | GTK GUI | CLI interface | `tuhi_cli.py` |
 
-## Components
+## Single-Process Architecture
 
-### tuhi_windows.py — Server
-
-The server is a long-running background process. Start it once and leave
-it running. It owns:
-
-- The BLE radio (via bleak)
-- The Wacom protocol state machine
-- Device configuration and drawing storage
-- The TCP IPC socket that CLI clients connect to
+All components run in a single Python process.  There is no daemon and no
+network socket.  The CLI creates a `TuhiApp`, calls `start()` (which spins
+up a background asyncio event loop for BLE via bleak), does its work, then
+calls `stop()`.
 
 ```
-python tuhi_windows.py
+┌──────────────────────────────────────────────────────────────┐
+│                        tuhi_cli.py                           │
+│                                                              │
+│  cmd_list()  cmd_search()  cmd_listen()  cmd_fetch()         │
+│       │            │             │             │             │
+│       └────────────┴─────────────┴─────────────┘            │
+│                         TuhiApp                              │
+│                         (tuhi/app.py)                        │
+│                              │                               │
+│                         AppDevice                            │
+│                         (per device, in-process state)       │
+│                              │                               │
+│                         TuhiDevice                           │
+│                         (tuhi/base_win.py)                   │
+│                              │                               │
+│                         WacomDevice                          │
+│              WacomProtocolSlate / IntuosPro / Spark          │
+│                              │                               │
+│                         BleakDeviceManager                   │
+│                         BleakBLEDevice                       │
+│                         BleakCharacteristic                  │
+└──────────────────────────────┬───────────────────────────────┘
+                               │  BLE (bleak / Windows Bluetooth API)
+                               │
+                        ┌──────┴──────┐
+                        │ Wacom device │
+                        │  (Bamboo,   │
+                        │   Slate,    │
+                        │  Intuos Pro)│
+                        └─────────────┘
 ```
 
-### tuhi_cli.py — Client
+### Key objects
 
-A command-line client that connects to the running server over TCP and
-issues commands. Each invocation connects, does one operation, then exits.
+| Class | File | Role |
+|---|---|---|
+| `TuhiApp` | `tuhi/app.py` | Orchestrates BLE + config; public CLI API |
+| `AppDevice` | `tuhi/app.py` | Per-device in-process state (replaces IPC proxy) |
+| `TuhiDevice` | `tuhi/base_win.py` | Wires BleakBLEDevice to AppDevice; drives Wacom protocol |
+| `BleakDeviceManager` | `tuhi/ble_bleak.py` | BLE scanning and connection (asyncio in background thread) |
+| `TuhiConfig` | `tuhi/config_win.py` | Config/drawing persistence in `%APPDATA%\tuhi` |
+
+---
+
+## Usage
 
 ```
 python tuhi_cli.py list                        # List registered devices
 python tuhi_cli.py search                      # Search for unregistered devices
 python tuhi_cli.py search --register           # Search and register the first found device
 python tuhi_cli.py listen XX:XX:XX:XX:XX:XX    # Listen for drawings (sync on button press)
-python tuhi_cli.py fetch  XX:XX:XX:XX:XX:XX    # Download stored drawings as JSON
-python tuhi_cli.py fetch  XX:XX:XX:XX:XX:XX --svg  # Download and export as SVG
-```
-
----
-
-## Communication Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        tuhi_cli.py                          │
-│                      (CLI client)                           │
-│                                                             │
-│  cmd_search()   cmd_listen()   cmd_fetch()   cmd_list()     │
-│       │               │             │             │         │
-│       └───────────────┴─────────────┴─────────────┘         │
-│                       TuhiIPCClientManager                   │
-│                       TuhiIPCClientDevice                    │
-└───────────────────────────┬─────────────────────────────────┘
-                            │  JSON-RPC over TCP (127.0.0.1:48150)
-                            │  Requests:  {"method": "...", "id": N, "args": {...}}
-                            │  Responses: {"id": N, "result": ...}
-                            │  Events:    {"event": "...", "data": {...}}
-                            │
-┌───────────────────────────┴─────────────────────────────────┐
-│                      tuhi_windows.py                        │
-│                        (Server)                             │
-│                                                             │
-│                      TuhiIPCServer                          │
-│                      TuhiIPCDevice (per device)             │
-│                            │                                │
-│                      TuhiKeeperManager                      │
-│                      TuhiDevice (per device)                │
-│                            │                                │
-│                      WacomDevice                            │
-│              WacomProtocolSlate / IntuosPro / Spark         │
-│                            │                                │
-│                      BleakDeviceManager                     │
-│                      BleakBLEDevice                         │
-│                      BleakCharacteristic                    │
-└───────────────────────────┬─────────────────────────────────┘
-                            │  BLE (bleak / Windows Bluetooth API)
-                            │
-                     ┌──────┴──────┐
-                     │ Wacom device │
-                     │  (Bamboo,   │
-                     │   Slate,    │
-                     │  Intuos Pro)│
-                     └─────────────┘
+python tuhi_cli.py fetch  XX:XX:XX:XX:XX:XX    # Export stored drawings as JSON
+python tuhi_cli.py fetch  XX:XX:XX:XX:XX:XX --svg  # Export as JSON + SVG
 ```
 
 ---
@@ -102,125 +88,72 @@ python tuhi_cli.py fetch  XX:XX:XX:XX:XX:XX --svg  # Download and export as SVG
 ### 1. Device Registration (first-time pairing)
 
 ```
-tuhi_cli.py                     tuhi_windows.py              Wacom device
-    │                                  │                           │
-    │── StartSearch ─────────────────>│                           │
-    │                                  │── BLE scan start ──────>│
-    │                                  │                           │
-    │                                  │<─ advertisement data ────│
-    │                                  │   (mfr_data len=4        │
-    │                                  │    = pairing mode)       │
-    │                                  │                           │
-    │                                  │  create TuhiDevice        │
-    │                                  │  (mode=REGISTER)         │
-    │                                  │                           │
-    │<── event: unregistered_device ──│                           │
-    │    (with device properties)      │                           │
-    │                                  │                           │
-    │  [user sees "Found: <addr>"]     │                           │
-    │                                  │                           │
-    │── Device.Register ─────────────>│                           │
-    │── StopSearch ──────────────────>│                           │
-    │                                  │── BLE connect ─────────>│
-    │                                  │<─ connected ─────────────│
-    │                                  │                           │
-    │                                  │── REGISTER_PRESS_BUTTON─>│
-    │                                  │                           │
-    │<── event: ButtonPressRequired ──│  [user presses button]    │
-    │                                  │<─ button confirmation ───│
-    │                                  │                           │
-    │                                  │  determine protocol       │
-    │                                  │  (SLATE / INTUOS_PRO)    │
-    │                                  │                           │
-    │                                  │── SET_TIME ─────────────>│
-    │                                  │── GET_TIME ─────────────>│
-    │                                  │── GET_FIRMWARE ─────────>│
-    │                                  │── GET_BATTERY ──────────>│
-    │                                  │                           │
-    │                                  │  save settings.ini        │
-    │                                  │  (address, uuid,          │
-    │                                  │   protocol)              │
-    │                                  │── BLE disconnect ───────>│
-    │                                  │                           │
-    │  [30s wait in CLI]               │                           │
-    │  "Registration complete"         │                           │
+tuhi_cli.py (TuhiApp)                        Wacom device
+    │                                              │
+    │  search(timeout, on_found)                   │
+    │── BLE scan start ─────────────────────────>  │
+    │                                              │
+    │                        <─ advertisement ────│
+    │                           (mfr_data len=4   │
+    │                            = pairing mode)  │
+    │                                              │
+    │  _add_device() → TuhiDevice(REGISTER)        │
+    │  on_found("Found: <addr>")                   │
+    │                                              │
+    │  register(address, on_button_press)          │
+    │── BLE connect ────────────────────────────> │
+    │                         <─ connected ───────│
+    │                                              │
+    │── REGISTER_PRESS_BUTTON ──────────────────> │
+    │  on_button_press() → "[Press the button]"    │
+    │                         <─ button press ────│
+    │                                              │
+    │                           determine protocol │
+    │── SET_TIME / GET_TIME / GET_FIRMWARE ──────> │
+    │── GET_BATTERY ────────────────────────────> │
+    │                                              │
+    │                           save settings.ini  │
+    │── BLE disconnect ─────────────────────────> │
+    │  "Registration complete."                    │
 ```
 
 ### 2. Fetching Drawings (listen / sync)
 
 ```
-tuhi_cli.py                     tuhi_windows.py              Wacom device
-    │                                  │                           │
-    │── Device.StartListening ───────>│                           │
-    │                                  │── BLE scan start ──────>│
-    │                                  │                           │
-    │                                  │<─ advertisement data ────│
-    │                                  │  (device known in config)│
-    │                                  │                           │
-    │                                  │── BLE connect ─────────>│
-    │                                  │<─ connected ─────────────│
-    │                                  │                           │
-    │                                  │── SET_TIME ─────────────>│
-    │                                  │── GET_BATTERY ──────────>│
-    │                                  │── GET_FIRMWARE ─────────>│
-    │                                  │── SELECT_GATT ──────────>│
-    │                                  │                           │
-    │                                  │<─ offline pen data ──────│
-    │                                  │   (stroke packets)       │
-    │                                  │                           │
-    │                                  │  parse strokes            │
-    │                                  │  save <timestamp>.json   │
-    │                                  │                           │
-    │<── event: device_property       │                           │
-    │    changed (drawings_available) │                           │
-    │                                  │── BLE disconnect ───────>│
-    │                                  │                           │
-    │── Device.StopListening ────────>│                           │
+tuhi_cli.py (TuhiApp)                        Wacom device
+    │                                              │
+    │  start_listening(address, on_drawings)       │
+    │── BLE scan start ─────────────────────────> │
+    │                                              │
+    │                        <─ advertisement ────│
+    │                           (device in config) │
+    │                                              │
+    │── BLE connect ────────────────────────────> │
+    │                         <─ connected ───────│
+    │                                              │
+    │── SET_TIME / GET_BATTERY / GET_FIRMWARE ──> │
+    │── SELECT_GATT ────────────────────────────> │
+    │                                              │
+    │                        <─ offline pen data ─│
+    │                           (stroke packets)  │
+    │                                              │
+    │  parse strokes → save <timestamp>.json       │
+    │  on_drawings(app_dev)                        │
+    │── BLE disconnect ─────────────────────────> │
 ```
 
-### 3. Fetching JSON Data
+### 3. Exporting Drawings
 
+Drawings are read directly from disk — no BLE needed:
+
+```python
+app = TuhiApp()
+app.start()
+drawings = app.config.load_drawings(address)  # returns list of Drawing objects
+for d in drawings:
+    print(d.to_json())
+app.stop()
 ```
-tuhi_cli.py                     tuhi_windows.py
-    │                                  │
-    │── Device.GetJSONData ──────────>│
-    │   {timestamp: N}                 │  read <timestamp>.json
-    │<── {json: "..."}  ─────────────│  from %APPDATA%\tuhi\
-    │                                  │  <addr>\<N>.json
-    │  save drawing_<N>.json locally  │
-    │  [optionally convert to SVG]    │
-```
-
----
-
-## IPC Protocol Reference
-
-All messages are newline-delimited JSON over a TCP connection to `127.0.0.1:48150`.
-
-### Client → Server (Requests)
-
-| Method | Args | Description |
-|---|---|---|
-| `GetDevices` | — | List registered device IDs |
-| `GetAllDevices` | — | List all devices with full properties |
-| `GetManagerProperties` | — | Searching state, device list, JSON versions |
-| `StartSearch` | — | Start BLE scanning for unregistered devices |
-| `StopSearch` | — | Stop BLE scanning |
-| `Device.Register` | `device_id` | Begin registration for a found device |
-| `Device.StartListening` | `device_id` | Connect and retrieve stored drawings |
-| `Device.StopListening` | `device_id` | Disconnect from device |
-| `Device.GetJSONData` | `device_id`, `timestamp`, `file_version` | Get a drawing as JSON |
-| `Device.GetProperties` | `device_id` | Get device metadata |
-
-### Server → Client (Events)
-
-| Event | Data | Description |
-|---|---|---|
-| `unregistered_device` | full device properties | New unregistered device detected during scan |
-| `search_stopped` | `status` | BLE scan has ended |
-| `manager_property_changed` | `property`, `value` | Searching state or device list changed |
-| `device_property_changed` | `device_id`, `property`, `value` | Per-device property update (battery, listening, etc.) |
-| `device_signal` | `device_id`, `signal`, `args` | Per-device signal (ButtonPressRequired, etc.) |
 
 ---
 
@@ -231,7 +164,7 @@ Drawings and config are stored in `%APPDATA%\tuhi\`:
 ```
 C:\Users\<user>\AppData\Roaming\tuhi\
   F4_21_DE_4D_26_BF\          ← BT address with _ instead of :
-    settings.ini               ← address, UUID, protocol
+    settings.ini               ← address, UUID, protocol, name
     <timestamp>.json           ← one file per drawing
     raw\
       log-*.yaml               ← raw BLE protocol log
@@ -246,26 +179,40 @@ C:\Users\<user>\AppData\Roaming\tuhi\
 
 | File | Purpose |
 |---|---|
+| `tuhi/app.py` | `TuhiApp` (orchestrator) and `AppDevice` (in-process device state) |
 | `tuhi/gobject_compat.py` | Lightweight GObject replacement (signals, properties, timers) |
 | `tuhi/ble_bleak.py` | BLE backend using bleak (`BleakDeviceManager`, `BleakBLEDevice`, `BleakCharacteristic`) |
 | `tuhi/uhid_win.py` | UHID stub — logs pen events; live mode pen injection not available on Windows |
-| `tuhi/ipc_server.py` | JSON-RPC TCP server on `localhost:48150` |
-| `tuhi/ipc_client.py` | JSON-RPC TCP client |
 | `tuhi/config_win.py` | Config using `%APPDATA%\tuhi` instead of XDG |
 | `tuhi/drawing_win.py` | Drawing model without `gi.repository` |
 | `tuhi/wacom_win.py` | Wacom protocol (same logic, Windows-compatible imports) |
-| `tuhi/base_win.py` | Orchestrator wiring all Windows backends together |
+| `tuhi/base_win.py` | `TuhiDevice` — wires BLE device to AppDevice and drives Wacom protocol |
 | `tuhi/export_win.py` | SVG/PNG export using svgwrite + Pillow |
-| `tuhi_windows.py` | Server entry point |
-| `tuhi_cli.py` | CLI client |
+| `tuhi_cli.py` | CLI entry point |
 
 ## Installation
 
 ```
-pip install -r requirements-windows.txt
+python -m venv .venv
+.venv\Scripts\pip install -r requirements-windows.txt
+.venv\Scripts\python tuhi_cli.py list
 ```
 
 Requirements: `bleak`, `svgwrite`, `Pillow`. Python 3.12+.
+
+## Known Issues / Design Notes
+
+### BLE connection guard (`ble_bleak.py`)
+BLE advertisements arrive ~10× per second during scanning. Each `device-updated`
+event triggers `_add_device` → `d.listen()` → `connect_device()`. Without a guard,
+every advertisement spawned a new connection thread, each overwriting the shared
+`_bleak_client` reference before the previous thread finished connecting — causing
+bleak to raise *"Service Discovery has not been performed yet"*.
+
+**Fix:** `BleakBLEDevice` now has a `_connecting` flag. `connect_device()` returns
+immediately if a connection is already in progress. The `BleakClient` instance is
+kept as a local variable and only written to `self._bleak_client` after service
+discovery succeeds.
 
 ## Limitations
 
@@ -281,4 +228,4 @@ Requirements: `bleak`, `svgwrite`, `Pillow`. Python 3.12+.
 ## Compatibility
 
 The original Linux codebase is completely untouched. All new Windows code
-lives in separate files (`*_win.py`, `ble_bleak.py`, `ipc_*.py`, etc.).
+lives in separate files (`*_win.py`, `ble_bleak.py`, `app.py`, etc.).

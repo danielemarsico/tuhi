@@ -91,6 +91,7 @@ class BleakBLEDevice(Object):
         self._loop = loop
         self._bleak_client = None
         self._connected = False
+        self._connecting = False   # prevents concurrent connection attempts
         self.characteristics = {}
         self.logger = logger.getChild(self.address)
 
@@ -135,39 +136,50 @@ class BleakBLEDevice(Object):
 
     def connect_device(self):
         """Connect to the BLE device asynchronously."""
-        def _connect():
-            try:
-                self._bleak_client = BleakClient(
-                    self._scanner_device.address,
-                    disconnected_callback=self._on_disconnected
-                )
-                future = asyncio.run_coroutine_threadsafe(
-                    self._async_connect(), self._loop
-                )
-                future.result(timeout=30)
-            except Exception as e:
-                self.logger.error(f'Connection failed: {e}')
-
         if self._connected:
             self.logger.info('Device is already connected')
             self.emit('connected')
             return
 
+        if self._connecting:
+            self.logger.debug('Connection already in progress, ignoring duplicate request')
+            return
+
+        self._connecting = True
         self.logger.debug('Connecting')
+
+        def _connect():
+            # Keep the client reference local so concurrent calls can't clobber it.
+            client = BleakClient(
+                self._scanner_device.address,
+                disconnected_callback=self._on_disconnected
+            )
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self._async_connect(client), self._loop
+                )
+                future.result(timeout=30)
+            except Exception as e:
+                self.logger.error(f'Connection failed: {e}')
+                self._connecting = False
+
         t = threading.Thread(target=_connect, daemon=True)
         t.start()
 
-    async def _async_connect(self):
-        await self._bleak_client.connect()
+    async def _async_connect(self, client):
+        await client.connect()
         # Resolve characteristics
-        for service in self._bleak_client.services:
+        for service in client.services:
             for char in service.characteristics:
                 uuid = char.uuid
                 if uuid not in self.characteristics:
                     self.characteristics[uuid] = BleakCharacteristic(self, char)
                     self.logger.debug(f'GattCharacteristic: {uuid}')
 
+        # Publish the connected client only after service discovery succeeds.
+        self._bleak_client = client
         self._connected = True
+        self._connecting = False
         threading.Thread(target=self.emit, args=('connected',), daemon=True).start()
 
     def _on_disconnected(self, client):

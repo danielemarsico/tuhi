@@ -86,7 +86,7 @@ class TuhiConfig(Object):
                 config['Device']['Protocol'] = ProtocolVersion.ANY.name.lower()
             self._devices[btaddr] = config['Device']
 
-    def new_device(self, address, uuid, protocol):
+    def new_device(self, address, uuid, protocol, name=None):
         assert is_btaddr(address)
         assert len(uuid) == 12
         assert protocol != ProtocolVersion.ANY
@@ -100,11 +100,14 @@ class TuhiConfig(Object):
         config.optionxform = str
         config.read(path)
 
-        config['Device'] = {
+        entry = {
             'Address': address,
             'UUID': uuid,
             'Protocol': protocol.name.lower(),
         }
+        if name:
+            entry['Name'] = name
+        config['Device'] = entry
 
         with open(path, 'w') as configfile:
             config.write(configfile)
