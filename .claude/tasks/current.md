@@ -24,20 +24,32 @@ Complete these in order. After each task, append status to PROGRESS.md. Stop and
 
 ### A1 — Window skeleton
 - [ ] Create `tuhi_win/tuhi_gui.py` with `TuhiGUIApp(tk.Tk)`.
-- [ ] Top bar: `device_label` (StringVar — shows address + name, or "No device registered"),
-  three buttons `[Register]` `[Listen]` `[Fetch]`, a `status_label` for
-  live feedback ("Searching…", "Listening…", "Ready", etc.).
-- [ ] Main area: `ttk.Notebook` (empty at startup).
-- [ ] On startup: read `TuhiConfig`, populate `device_label` if a device is already registered.
+- [ ] Top bar row 1: `device_label` (StringVar — address + name, or "No device registered").
+- [ ] Top bar row 2: mode selector `● Normal ○ Live` (left) +
+  orientation selector `● Landscape ○ Portrait` (right) + `status_label`.
+- [ ] Normal-mode action bar: `[Register]` `[Listen]` `[Fetch]`.
+- [ ] Main area: `ttk.Notebook` (empty at startup); hidden in Live mode.
+- [ ] On startup: read `TuhiConfig`, populate `device_label` if a device is registered.
 
 ### A2 — DrawingCanvas widget
-- [ ] `DrawingCanvas(tk.Canvas)`: takes a `Drawing` object, renders all strokes
-  as polylines.
+- [ ] `DrawingCanvas(tk.Canvas)`: takes a `Drawing` object and an `orientation`
+  (`'landscape'` or `'portrait'`), renders all strokes as polylines.
 - [ ] Coordinate normalisation: `Drawing.dimensions = (W, H)` in device units →
   scale to canvas pixel size, preserving aspect ratio with letterboxing.
+- [ ] **Orientation transform** (applied before scaling):
+  - Landscape: identity — `(x, y)` as-is.
+  - Portrait: rotate 90° CCW — `(x', y') = (y, W - x)`, swap canvas W↔H.
 - [ ] Pressure → line width: map `pressure / 0x10000 * 2 + 0.5` px
   (thin at zero, ~2.5 px at max).
 - [ ] Pen-up gaps (consecutive points with `position is None`) break the polyline.
+- [ ] `redraw(orientation)` method: re-renders existing drawing with new orientation
+  so the selector takes effect immediately on all visible tabs.
+
+### A2b — Orientation selector behaviour
+- [ ] `● Landscape ○ Portrait` radio buttons stored as a shared `tk.StringVar`.
+- [ ] On change: call `redraw(orientation)` on every `DrawingCanvas` in the Notebook
+  and on the `LiveCanvas` (if in Live mode).
+- [ ] Selected orientation persisted in memory for the session (not to disk).
 
 ### A3 — Register flow
 - [ ] `[Register]` button: disabled while another operation is running.
@@ -130,7 +142,10 @@ Drawings are accumulated in memory during the live session; file is written on
   `root.after(0, ...)`:
   - `in_proximity=True`: append to current polyline segment; redraw.
   - `in_proximity=False`: seal segment; next point starts a new segment.
-  - Coordinates normalised using device dimensions from config.
+  - Coordinates normalised using device dimensions from config, with the same
+    landscape/portrait transform as `DrawingCanvas`.
+- [ ] Orientation selector change redraws the LiveCanvas immediately (re-maps all
+  accumulated segments).
 - [ ] Switching mode selector back to Normal stops any active live session.
 
 ### B5 — Bamboo Folio smoke-test
