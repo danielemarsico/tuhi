@@ -309,6 +309,7 @@ class WacomProtocolBase(WacomProtocolLowLevelComm):
     __gsignals__ = {
         'drawing': (1, None, (TYPE_PYOBJECT,)),
         'battery-status': (1, None, (TYPE_INT, TYPE_BOOLEAN)),
+        'live-pen-data': (1, None, (TYPE_INT, TYPE_INT, TYPE_INT, TYPE_BOOLEAN)),
     }
 
     def __init__(self, device, uuid, protocol_version=ProtocolVersion.ANY):
@@ -348,8 +349,9 @@ class WacomProtocolBase(WacomProtocolLowLevelComm):
                 return
             data = value[2:]
             while data:
-                if bytes(data) == b'\xff\xff\xff\xff\xff\xff':
+                if bytes(data[:6]) == b'\xff\xff\xff\xff\xff\xff':
                     logger.debug('Pen left proximity')
+                    self.emit('live-pen-data', 0, 0, 0, False)
                     if self._uhid_device is not None:
                         self._uhid_device.call_input_event([1, 0, 0, 0, 0, 0, 0, 0])
                 else:
@@ -357,6 +359,7 @@ class WacomProtocolBase(WacomProtocolLowLevelComm):
                     y = int.from_bytes(data[2:4], byteorder='little')
                     pressure = int.from_bytes(data[4:6], byteorder='little')
                     logger.debug(f'New Pen Data: ({x},{y}), pressure: {pressure}')
+                    self.emit('live-pen-data', x, y, pressure, True)
                     if self._uhid_device is not None:
                         self._uhid_device.call_input_event([1, 1, *data[:6]])
                 data = data[6:]
@@ -694,6 +697,7 @@ class WacomDevice(Object):
         'done': (1, None, (TYPE_PYOBJECT,)),
         'button-press-required': (1, None, ()),
         'battery-status': (1, None, (TYPE_INT, TYPE_BOOLEAN)),
+        'live-pen-data': (1, None, (TYPE_INT, TYPE_INT, TYPE_INT, TYPE_BOOLEAN)),
     }
 
     def __init__(self, device, config=None):
@@ -737,6 +741,10 @@ class WacomDevice(Object):
         self._wacom_protocol.connect(
             'battery-status',
             lambda prot, percent, is_charging, self: self.emit('battery-status', percent, is_charging),
+            self)
+        self._wacom_protocol.connect(
+            'live-pen-data',
+            lambda prot, x, y, pressure, in_proximity, self: self.emit('live-pen-data', x, y, pressure, in_proximity),
             self)
         self._wacom_protocol.connect('notify::dimensions', self._on_dimensions)
 
