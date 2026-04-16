@@ -168,6 +168,10 @@ class TuhiDevice(Object):
         if mode == DeviceMode.REGISTER:
             self._wacom_device.start_register()
         elif mode == DeviceMode.LIVE:
+            self._wacom_device.connect(
+                'live-pen-data',
+                lambda wdev, x, y, p, inp, ddev: ddev.emit('live-pen-data', x, y, p, inp),
+                self._tuhi_dbus_device)
             self._wacom_device.start_live(self._tuhi_dbus_device.uhid_fd)
         else:
             self._wacom_device.start_listen()

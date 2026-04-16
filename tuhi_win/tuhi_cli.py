@@ -141,6 +141,83 @@ def cmd_listen(args):
     return 0
 
 
+def cmd_live(args):
+    """Stream live pen data from a registered device until Ctrl+C."""
+    import datetime
+    from tuhi.drawing_win import Drawing
+
+    address = args.address.upper()
+    app = _make_app(args)
+
+    if address not in app.config.devices:
+        print(f'Error: {address} is not registered.')
+        app.stop()
+        return 1
+
+    cfg = app.config.devices[address]
+    device_name = cfg.get('name', cfg.get('Name', address))
+
+    # Determine device dimensions (best-effort from stored drawings)
+    stored = app.config.load_drawings(address)
+    if stored:
+        dims = stored[0].dimensions
+    else:
+        dims = (21600, 14800)  # Bamboo Folio default
+
+    timestamp = int(time.time())
+    drawing = Drawing(device_name, dims, timestamp)
+
+    print(f'Starting live mode on {address}...')
+    print('Draw on your device. Press Ctrl+C to finish.\n')
+
+    def on_pen_point(x, y, pressure, in_proximity):
+        if in_proximity:
+            stroke = drawing.current_stroke
+            if stroke is None:
+                stroke = drawing.new_stroke()
+            stroke.new_abs(position=(x, y), pressure=pressure)
+        else:
+            if drawing.current_stroke is not None:
+                drawing.current_stroke.seal()
+
+    app.start_live(address, on_pen_point=on_pen_point)
+
+    try:
+        while True:
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        pass
+
+    app.stop_live(address)
+    app.stop()
+
+    drawing.seal()
+
+    if not drawing.strokes:
+        print('No strokes recorded.')
+        return 0
+
+    output_dir = getattr(args, 'output', None) or '.'
+    ts_str = datetime.datetime.fromtimestamp(timestamp).strftime('%Y%m%d_%H%M%S')
+    json_path = f'{output_dir}/live_{ts_str}.json'
+    json_data = drawing.to_json()
+    with open(json_path, 'w') as f:
+        f.write(json_data)
+    print(f'Saved: {json_path}  ({len(drawing.strokes)} strokes)')
+
+    if args.svg:
+        try:
+            from tuhi.export_win import JsonSvg
+            import json as jsonlib
+            svg_path = f'{output_dir}/live_{ts_str}.svg'
+            JsonSvg(jsonlib.loads(json_data), 'landscape', svg_path)
+            print(f'SVG:   {svg_path}')
+        except Exception as e:
+            print(f'SVG export failed: {e}')
+
+    return 0
+
+
 def cmd_fetch(args):
     """Download stored drawings from a device and export as JSON (optionally SVG)."""
     address = args.address.upper()
@@ -224,6 +301,12 @@ def main():
                     default='landscape',
                     help='Drawing orientation for SVG export')
 
+    # live
+    sp = sub.add_parser('live', help='Stream live pen data from a registered device')
+    sp.add_argument('address', help='Bluetooth address (XX:XX:XX:XX:XX:XX)')
+    sp.add_argument('--svg', action='store_true', help='Also write an SVG alongside the JSON')
+    sp.add_argument('--output', default='.', help='Output directory (default: current dir)')
+
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -241,6 +324,7 @@ def main():
         'search': cmd_search,
         'listen': cmd_listen,
         'fetch': cmd_fetch,
+        'live': cmd_live,
     }
 
     return commands[args.command](args)

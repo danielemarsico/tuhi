@@ -18,7 +18,7 @@
 import logging
 import threading
 
-from tuhi.gobject_compat import Object, Property, TYPE_PYOBJECT
+from tuhi.gobject_compat import Object, Property, TYPE_PYOBJECT, TYPE_INT, TYPE_BOOLEAN
 from tuhi.ble_bleak import BleakDeviceManager
 from tuhi.wacom_win import DeviceMode
 from tuhi.config_win import TuhiConfig
@@ -45,6 +45,7 @@ class AppDevice(Object):
     __gsignals__ = {
         'register-requested': (1, None, ()),
         'button-press-required': (1, None, ()),
+        'live-pen-data': (1, None, (TYPE_INT, TYPE_INT, TYPE_INT, TYPE_BOOLEAN)),
     }
 
     def __init__(self):
@@ -264,6 +265,39 @@ class TuhiApp:
             app_dev.stop_listening()
         # Stop scanning only when no device still needs it
         if not any(dev.listening for dev in self._app_devices.values()):
+            self.bluez.stop_discovery()
+
+    def start_live(self, address, on_pen_point=None):
+        """
+        Start live pen streaming for *address*.  Non-blocking.
+
+        on_pen_point(x, y, pressure, in_proximity) is called on the BLE
+        thread for every incoming pen event.  Use root.after(0, ...) in a
+        GUI to marshal back to the UI thread.
+
+        Raises KeyError if *address* is not registered in config.
+        """
+        if address not in self.config.devices:
+            raise KeyError(f'{address}: not a registered device')
+
+        if address not in self._app_devices:
+            self._app_devices[address] = AppDevice()
+
+        app_dev = self._app_devices[address]
+
+        if on_pen_point:
+            app_dev.connect('live-pen-data',
+                            lambda dev, x, y, p, inp: on_pen_point(x, y, p, inp))
+
+        app_dev.live = True
+        self.bluez.start_discovery()
+
+    def stop_live(self, address):
+        """Stop live pen streaming for *address*."""
+        app_dev = self._app_devices.get(address)
+        if app_dev:
+            app_dev.live = False
+        if not any(dev.live for dev in self._app_devices.values()):
             self.bluez.stop_discovery()
 
     def get_app_device(self, address):
