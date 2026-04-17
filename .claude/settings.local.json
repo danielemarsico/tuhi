@@ -16,7 +16,8 @@
       "Bash(.venv/Scripts/python -c ' *)",
       "Bash(.venv/Scripts/python tuhi_cli.py --help)",
       "Bash(.venv/Scripts/python tuhi_cli.py list)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(grep -E \".py$\")"
     ]
   }
 }

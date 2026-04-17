@@ -619,6 +619,7 @@ class WacomProtocolSlate(WacomProtocolSpark):
 
     def live_mode(self, mode, uhid):
         if mode:
+            self.check_connection()
             self.update_dimensions()
             self.x_max = int(self.width / self.point_size) - 1000
             self.y_max = int(self.height / self.point_size) - 500
