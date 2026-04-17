@@ -1,40 +1,73 @@
 # Task Progress
 
 ## Macro-activity A: Simple GUI
-**Status: PLANNED — not started**
-See `current.md` tasks A1–A5.
+**Status: DONE — merged in PR #3 (commit 06695b7)**
 
-Key design decisions recorded here:
-- **Framework:** tkinter (zero extra dependencies).
-- **Rendering:** stroke data from `Drawing.strokes` drawn directly as
-  `Canvas.create_line` polylines — no SVG library needed.
-- **Coordinate space:** `Drawing.dimensions = (W, H)` in device units; scale to
-  canvas pixel size preserving aspect ratio.
-- **Pressure → line width:** `pressure / 0x10000 * 2 + 0.5 px`.
-- **Async safety:** all BLE operations run in background threads; UI updates use
-  `root.after(0, callback)`.
-- **Multi-drawing:** `ttk.Notebook`, one tab per `Drawing` with timestamp label.
+All A1–A5 tasks implemented in `tuhi_win/tuhi_gui.py` (557 lines).
+
+### What was built
+- **A1 — Window skeleton:** `TuhiGUIApp(tk.Tk)` with device label (address + friendly
+  name from config), mode selector (`Normal | Live`), orientation selector
+  (`Landscape | Portrait`), status bar, and Normal-mode action bar (`[Register]`
+  `[Listen]` `[Fetch]`). Device label populated at startup from `TuhiConfig`.
+- **A2 — DrawingCanvas:** `DrawingCanvas(tk.Canvas)` — letterboxed rendering of
+  `Drawing.strokes` as `create_line` polylines. Pressure → line width:
+  `pressure / 0x10000 * 2 + 0.5 px`. Pen-lift gaps break the polyline.
+  Orientation transform: landscape = identity; portrait = 90° CCW
+  (`x' = y`, `y' = W − x`, canvas W↔H swapped).
+- **A2b — Orientation selector:** shared `tk.StringVar`; on change calls
+  `redraw(orientation)` on every open `DrawingCanvas` tab and on `LiveCanvas`
+  if in Live mode. Persisted in-session only (not to disk).
+- **A3 — Register flow:** background `threading.Thread` calls `TuhiApp.search()`;
+  status updates via `root.after(0, ...)`. On device found: `tk.Toplevel` dialog
+  "Press the button on your device", then `TuhiApp.register()`. Buttons disabled
+  while running.
+- **A4 — Listen flow:** background thread calls `TuhiApp.start_listening()`;
+  `[Listen]` toggles to `[Stop]`. New drawings added as Notebook tabs via
+  `root.after(0, ...)` callback. `[Stop]` calls `TuhiApp.stop_listening()`.
+- **A5 — Fetch flow:** `[Fetch]` calls `TuhiApp.config.load_drawings()` (disk,
+  no BLE); clears existing tabs; adds one tab per drawing with human-readable
+  timestamp label. Shows `messagebox` if no drawings found.
 
 ---
 
 ## Macro-activity B: Live mode
-**Status: PLANNED — not started**
-See `current.md` tasks B1–B5.
+**Status: DONE (B1–B4) — merged in PR #3 (commit 06695b7). B5 (smoke-test) pending.**
 
-Key design decisions recorded here:
-- Device (`daniele bamboo`, `F4:21:DE:4D:26:BF`) registered as `Protocol = slate`;
-  `WacomProtocolSlate` already sends `SET_MODE=LIVE` in `start_live()`.
-- Live pen data decoded in `WacomProtocolBase._on_pen_data_changed()`:
-  `0xa1` packets → `(x, y, pressure)` in device units (same range as stored drawings).
-  Pen-lift: `\xff\xff\xff\xff\xff\xff`.
-- On Windows, UHID injection is a no-op stub; live data routed via a new
-  `live-pen-data` signal: `WacomProtocolBase → WacomDevice → TuhiDevice → AppDevice`.
-- **CLI output format:** JSON (same `Drawing.to_json()` schema as stored drawings) +
-  optional `--svg`. File written on Ctrl+C: `live_<timestamp>.json`.
-- **GUI:** `Normal | Live` mode selector. Normal = existing Register/Listen/Fetch/Notebook.
-  Live = fullscreen `LiveCanvas` + `[Start Live]`/`[Stop Live]` toggle. Switching away
-  from Live mode auto-stops the session.
-- No changes to the Linux code path needed.
+### What was built
+
+**B1 — Live-pen-data signal (`tuhi/wacom_win.py`)**
+- Added `'live-pen-data'` to `WacomProtocolBase.__gsignals__` and
+  `WacomDevice.__gsignals__`.
+- `WacomProtocolBase._on_pen_data_changed()`: `0xa1` in-proximity packets emit
+  `('live-pen-data', x, y, pressure, True)`; pen-lift (`\xff\xff\xff\xff\xff\xff`)
+  emits `('live-pen-data', 0, 0, 0, False)`. Existing UHID call kept → Linux unchanged.
+- `WacomDevice._init_protocol()`: forwards the signal from inner protocol object.
+
+**B2 — Signal wiring (`tuhi/app.py`, `tuhi/base_win.py`)**
+- `AppDevice.__gsignals__` extended with `'live-pen-data'`.
+- `TuhiDevice._on_bluez_device_connected` LIVE branch: connects
+  `wacom_device.live-pen-data → app_dev.emit('live-pen-data', ...)`.
+- `TuhiApp.start_live(address, on_pen_point)`: sets `app_dev.live = True`,
+  connects callback, starts BLE discovery.
+- `TuhiApp.stop_live(address)`: sets `app_dev.live = False`.
+
+**B3 — CLI `live` command (`tuhi_cli.py`)**
+- New `live` subparser: `python tuhi_cli.py live <addr> [--svg] [--output PATH]`.
+- Accumulates `(x, y, pressure, in_proximity)` events into a `Drawing`; pen-lift
+  seals stroke. On `Ctrl+C`: writes `live_<timestamp>.json` (and optionally `.svg`).
+- Prints stroke count + output filenames on exit.
+
+**B4 — GUI mode switch + LiveCanvas (`tuhi_gui.py`)**
+- `Normal | Live` radio buttons in top bar; switching stops any active session.
+- `LiveCanvas(tk.Canvas)`: fills window; receives `on_pen_point` via
+  `root.after(0, ...)`; in-proximity appends to current segment, pen-lift seals it.
+  Coordinates normalised with same letterbox + landscape/portrait transform as
+  `DrawingCanvas`. Orientation selector change re-maps all accumulated segments.
+- `[Start Live]` / `[Stop Live]` toggle calls `TuhiApp.start_live()` /
+  `TuhiApp.stop_live()`.
+
+**B5 — Smoke-test:** not yet run — needs real hardware session.
 
 ---
 

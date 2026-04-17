@@ -353,7 +353,7 @@ class TuhiApp:
 
         if mode == DeviceMode.REGISTER:
             d.mode = mode
-        elif app_dev.listening:
+        elif app_dev.listening and not d.busy:
             d.listen()
 
     def _on_discovery_stopped(self, manager):

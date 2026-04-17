@@ -138,6 +138,11 @@ class TuhiDevice(Object):
     def sync_state(self):
         return self._sync_state
 
+    @Property
+    def busy(self):
+        """True while a WacomDevice _run thread is active."""
+        return self._wacom_device is not None and self._wacom_device._is_running
+
     def _connect_device(self, mode):
         if self._signals['connected'] is None:
             self._signals['connected'] = self._bluez_device.connect(

@@ -5,12 +5,13 @@
 #  Layout:
 #    ┌─────────────────────────────────────────────────────────┐
 #    │  daniele bamboo  F4:21:DE:4D:26:BF                      │
-#    │  ● Normal  ○ Live        ● Landscape  ○ Portrait        │
+#    │  ● Normal  ○ Live        ○ Landscape  ● Portrait        │
 #    │  [status bar]                                           │
 #    ├─────────────────────────────────────────────────────────┤
 #    │  Normal:  [Register]  [Listen]  [Fetch]                 │
 #    │           ┌──Notebook──────────────────────────────┐   │
-#    │           │ 2024-01-15 10:30 │ …                    │   │
+#    │           │ 2024-01-15 10:30 × │ 2024-01-16 × │    │   │
+#    │           │  [Save SVG] [Delete]                    │   │
 #    │           │  <DrawingCanvas>                        │   │
 #    │           └────────────────────────────────────────┘   │
 #    ├─────────────────────────────────────────────────────────┤
@@ -23,22 +24,106 @@
 #  Framework: tkinter (built-in, zero extra dependencies).
 #  Rendering: stroke data from Drawing.strokes drawn as Canvas polylines.
 #
+#  Tab label: "2024-01-15 10:30 ×"  — clicking × closes the tab without
+#  deleting the file.
+#
+#  Per-tab toolbar buttons:
+#    [Save SVG]  — export current drawing as SVG (filedialog)
+#    [Delete]    — delete drawing file from disk and close tab
+#
 
 import os
 import sys
 import time
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox
+import tkinter.font as tkfont
+from tkinter import ttk, messagebox, filedialog
 
 # Allow running from any working directory
 sys.path.insert(0, os.path.dirname(__file__))
 
 from tuhi.app import TuhiApp
 from tuhi.config_win import TuhiConfig, get_default_data_dir
+from tuhi.export_win import JsonSvg
 
 CANVAS_W = 900
 CANVAS_H = 600
+
+
+# ---------------------------------------------------------------------------
+# ClosableNotebook
+# ---------------------------------------------------------------------------
+
+class ClosableNotebook(ttk.Notebook):
+    """
+    ttk.Notebook where each tab label ends with ' ×'.
+    Clicking the × portion of the label closes the tab without deleting
+    anything from disk.
+
+    Usage:
+        nb.add_closeable(frame, title, on_close=callable)
+    """
+
+    def __init__(self, parent, **kwargs):
+        super().__init__(parent, **kwargs)
+        self._close_callbacks = {}   # tab widget path -> callable
+        self.bind('<Button-1>', self._on_click, add=True)
+
+    def add_closeable(self, child, text, on_close=None):
+        """Add *child* with tab label '*text* ×'."""
+        super().add(child, text=f'{text}  ×')
+        if on_close:
+            self._close_callbacks[str(child)] = on_close
+
+    def _on_click(self, event):
+        try:
+            idx = self.index(f'@{event.x},{event.y}')
+        except tk.TclError:
+            return
+
+        tab_text = self.tab(idx, 'text')
+        if not tab_text.endswith('  ×'):
+            return
+
+        # Measure where '  ×' starts inside the tab label text.
+        try:
+            font = tkfont.nametofont('TkDefaultFont')
+        except Exception:
+            font = tkfont.Font()
+        base_text = tab_text[:-3]          # strip trailing '  ×'
+        base_w = font.measure(base_text)   # px up to where × begins
+
+        # Find the tab's left edge by scanning the tab bar in 2px steps.
+        tab_left = self._tab_left_x(idx)
+        if tab_left is None:
+            return
+
+        # Standard TNotebook.Tab has ~6px inner padding on each side.
+        inner_pad = 6
+        x_region_start = tab_left + inner_pad + base_w
+
+        if event.x >= x_region_start:
+            tab_path = self.tabs()[idx]
+            cb = self._close_callbacks.pop(tab_path, None)
+            self.forget(idx)
+            if cb:
+                cb()
+
+    def _tab_left_x(self, target_idx):
+        """Return the leftmost x pixel of the tab at *target_idx*."""
+        width = self.winfo_width() or 800
+        prev = None
+        for x in range(0, width, 2):
+            try:
+                i = self.index(f'@{x},5')
+            except tk.TclError:
+                i = None
+            if i != prev:
+                if i == target_idx:
+                    return x
+                prev = i
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -55,12 +140,16 @@ class DrawingCanvas(tk.Canvas):
 
     Orientation transforms (applied before scaling):
       Landscape: identity — (x, y) as-is.
-      Portrait:  rotate 90° CCW — (x', y') = (y, W - x); swap canvas W↔H.
+      Portrait:  rotate 90° CW — (x', y') = (H - y, x); swap canvas W↔H.
 
     Pressure → line width: pressure / 0x10000 * 2 + 0.5 px.
+
+    The orientation is frozen at construction time and is not changed by the
+    global orientation selector — it reflects the mode in which the drawing
+    was loaded/synced.
     """
 
-    def __init__(self, parent, drawing, orientation='landscape', **kwargs):
+    def __init__(self, parent, drawing, orientation='portrait', **kwargs):
         kwargs.setdefault('bg', 'white')
         kwargs.setdefault('width', CANVAS_W)
         kwargs.setdefault('height', CANVAS_H)
@@ -86,7 +175,7 @@ class DrawingCanvas(tk.Canvas):
         ch = int(self['height'])
 
         if self._orientation == 'portrait':
-            # 90° CCW: (x,y) → (y, W-x); device logical size becomes (dh, dw)
+            # 90° CW: (x,y) → (H-y, x); device logical size becomes (dh, dw)
             logical_w, logical_h = dh, dw
         else:
             logical_w, logical_h = dw, dh
@@ -97,14 +186,14 @@ class DrawingCanvas(tk.Canvas):
         oy = (ch - logical_h * scale) / 2
 
         for stroke in self._drawing.strokes:
-            self._draw_stroke(stroke, dw, scale, ox, oy)
+            self._draw_stroke(stroke, dw, dh, scale, ox, oy)
 
-    def _transform(self, x, y, dw):
+    def _transform(self, x, y, dw, dh):
         if self._orientation == 'portrait':
-            return y, dw - x
+            return dh - y, x
         return x, y
 
-    def _draw_stroke(self, stroke, dw, scale, ox, oy):
+    def _draw_stroke(self, stroke, dw, dh, scale, ox, oy):
         segment = []
         for point in stroke.points:
             if point.position is None:
@@ -113,7 +202,7 @@ class DrawingCanvas(tk.Canvas):
                 segment = []
                 continue
 
-            px, py = self._transform(point.position[0], point.position[1], dw)
+            px, py = self._transform(point.position[0], point.position[1], dw, dh)
             sx = ox + px * scale
             sy = oy + py * scale
             pressure = point.pressure or 0
@@ -144,7 +233,7 @@ class LiveCanvas(tk.Canvas):
     """
 
     def __init__(self, parent, device_dimensions=(21600, 14800),
-                 orientation='landscape', **kwargs):
+                 orientation='portrait', **kwargs):
         kwargs.setdefault('bg', 'white')
         super().__init__(parent, **kwargs)
         self._dims = device_dimensions
@@ -186,7 +275,7 @@ class LiveCanvas(tk.Canvas):
         ch = self.winfo_height() or CANVAS_H
 
         if self._orientation == 'portrait':
-            tx, ty = y, dw - x
+            tx, ty = dh - y, x
             lw, lh = dh, dw
         else:
             tx, ty = x, y
@@ -230,12 +319,13 @@ class TuhiGUIApp(tk.Tk):
         # Shared state
         self._address = None          # registered device address
         self._mode = tk.StringVar(value='normal')
-        self._orientation = tk.StringVar(value='landscape')
+        self._orientation = tk.StringVar(value='portrait')  # A6.5: portrait default
         self._status = tk.StringVar(value='')
         self._device_label = tk.StringVar(value='No device registered')
         self._listening = False
         self._live_running = False
         self._buttons = {}            # name -> widget, for enable/disable
+        self._shown_timestamps = set()  # timestamps already present in Notebook
 
         self._build_ui()
         self._load_registered_device()
@@ -296,8 +386,8 @@ class TuhiGUIApp(tk.Tk):
             btn.pack(side='left', padx=2)
             self._buttons[name] = btn
 
-        # Notebook
-        self._notebook = ttk.Notebook(self._normal_frame)
+        # Notebook with closeable tabs
+        self._notebook = ClosableNotebook(self._normal_frame)
         self._notebook.pack(fill='both', expand=True)
 
     def _build_live_frame(self):
@@ -309,11 +399,12 @@ class TuhiGUIApp(tk.Tk):
         self._buttons['live'] = btn
 
         self._live_canvas = LiveCanvas(self._live_frame,
+                                       orientation=self._orientation.get(),
                                        width=CANVAS_W, height=CANVAS_H)
         self._live_canvas.pack(fill='both', expand=True)
 
     # ------------------------------------------------------------------ #
-    # Startup: populate device label from config                          #
+    # Startup: populate device label and load drawings from disk           #
     # ------------------------------------------------------------------ #
 
     def _load_registered_device(self):
@@ -323,6 +414,21 @@ class TuhiGUIApp(tk.Tk):
             self._address = d['address']
             name = d['name'] or ''
             self._device_label.set(f"{name}  {self._address}")
+            # A6.2: load all drawings immediately at startup
+            self._load_drawings()
+
+    def _load_drawings(self):
+        """Load all drawings from disk into the Notebook (full reload)."""
+        if self._address is None:
+            return
+        drawings = self._app.config.load_drawings(self._address)
+        for tab in self._notebook.tabs():
+            self._notebook.forget(tab)
+        self._shown_timestamps.clear()
+        for drawing in sorted(drawings, key=lambda d: d.timestamp):
+            self._add_drawing_tab(drawing)
+        if drawings:
+            self._set_status(f'Loaded {len(drawings)} drawing(s).')
 
     # ------------------------------------------------------------------ #
     # Mode / orientation selectors                                        #
@@ -336,18 +442,20 @@ class TuhiGUIApp(tk.Tk):
             self._live_frame.pack_forget()
             self._normal_frame.pack(fill='both', expand=True, padx=8, pady=4)
         else:
+            # Stop any active Listen session before entering Live mode so both
+            # don't fight over the same BLE connection.
+            if self._listening:
+                self._app.stop_listening(self._address)
+                self._listening = False
+                self._buttons['listen'].configure(text='Listen')
+                self._set_buttons_state('normal')
             self._normal_frame.pack_forget()
             self._live_frame.pack(fill='both', expand=True, padx=8, pady=4)
 
     def _on_orientation_changed(self):
+        # A6.6: existing DrawingCanvas tabs keep the orientation they were
+        # created with — only the LiveCanvas and future new tabs are affected.
         orientation = self._orientation.get()
-        # Redraw all notebook canvases
-        for tab_id in self._notebook.tabs():
-            frame = self._notebook.nametowidget(tab_id)
-            for child in frame.winfo_children():
-                if isinstance(child, DrawingCanvas):
-                    child.redraw(orientation)
-        # Redraw live canvas (clears accumulated stroke coords, acceptable)
         self._live_canvas.redraw(orientation)
 
     # ------------------------------------------------------------------ #
@@ -452,9 +560,10 @@ class TuhiGUIApp(tk.Tk):
                                 'No drawings on disk. Use Listen to sync drawings first.')
             return
 
-        # Clear existing tabs
+        # Clear existing tabs and reset dedup set
         for tab in self._notebook.tabs():
             self._notebook.forget(tab)
+        self._shown_timestamps.clear()
 
         for drawing in sorted(drawings, key=lambda d: d.timestamp):
             self._add_drawing_tab(drawing)
@@ -462,17 +571,65 @@ class TuhiGUIApp(tk.Tk):
         self._set_status(f'Loaded {len(drawings)} drawing(s).')
 
     # ------------------------------------------------------------------ #
-    # Drawing tab helper                                                  #
+    # Drawing tab helper (A6.3: per-tab toolbar)                          #
     # ------------------------------------------------------------------ #
 
     def _add_drawing_tab(self, drawing):
+        if drawing.timestamp in self._shown_timestamps:
+            return   # already shown; avoids duplicates from Listen callbacks
+        self._shown_timestamps.add(drawing.timestamp)
+
         ts = time.strftime('%Y-%m-%d %H:%M', time.localtime(drawing.timestamp))
+        orientation = self._orientation.get()   # frozen at creation time (A6.6)
+
         frame = ttk.Frame(self._notebook)
-        canvas = DrawingCanvas(frame, drawing,
-                               orientation=self._orientation.get(),
+
+        # --- Per-tab toolbar ---
+        toolbar = ttk.Frame(frame)
+        toolbar.pack(fill='x', pady=(2, 0))
+
+        canvas = DrawingCanvas(frame, drawing, orientation=orientation,
                                width=CANVAS_W, height=CANVAS_H)
         canvas.pack(fill='both', expand=True)
-        self._notebook.add(frame, text=ts)
+
+        def _save_svg():
+            safe_ts = ts.replace(' ', '_').replace(':', '-')
+            path = filedialog.asksaveasfilename(
+                parent=self,
+                defaultextension='.svg',
+                filetypes=[('SVG files', '*.svg'), ('All files', '*.*')],
+                initialfile=f'drawing_{safe_ts}.svg',
+                title='Save drawing as SVG',
+            )
+            if not path:
+                return
+            try:
+                import json as _json
+                JsonSvg(_json.loads(drawing.to_json()), canvas._orientation, path)
+                self._set_status(f'Saved: {os.path.basename(path)}')
+            except Exception as e:
+                messagebox.showerror('Export failed', str(e))
+
+        def _delete_drawing():
+            if not messagebox.askyesno(
+                    'Delete drawing',
+                    f'Permanently delete drawing from {ts}?\nThis cannot be undone.',
+                    parent=self):
+                return
+            json_path = self._app.config.drawing_path(self._address, drawing.timestamp)
+            try:
+                os.remove(json_path)
+            except OSError as e:
+                messagebox.showerror('Delete failed', str(e), parent=self)
+                return
+            self._notebook.forget(frame)
+            self._set_status(f'Deleted drawing from {ts}.')
+
+        ttk.Button(toolbar, text='Save SVG', command=_save_svg).pack(side='left', padx=2)
+        ttk.Button(toolbar, text='Delete', command=_delete_drawing).pack(side='left', padx=2)
+
+        # × is in the tab label (ClosableNotebook handles the click)
+        self._notebook.add_closeable(frame, ts)
         self._notebook.select(frame)
 
     # ------------------------------------------------------------------ #

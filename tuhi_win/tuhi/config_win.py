@@ -139,6 +139,10 @@ class TuhiConfig(Object):
         configdir = Path(self._base_path, _addr_to_dir(address))
         return [Drawing.from_json(f) for f in configdir.glob('*.json')]
 
+    def drawing_path(self, address, timestamp):
+        """Return the Path to the JSON file for the given drawing timestamp."""
+        return Path(self._base_path, _addr_to_dir(address), f'{timestamp}.json')
+
     @classmethod
     def set_base_path(cls, path):
         if cls._instance is not None:

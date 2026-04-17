@@ -16,7 +16,7 @@ preserved unchanged.
 | GObject/GLib | Custom signal system | `tuhi/gobject_compat.py` |
 | XDG directories | %APPDATA%/tuhi | `tuhi/config_win.py` |
 | pycairo (PNG) | Pillow | `tuhi/export_win.py` |
-| GTK GUI | CLI interface | `tuhi_cli.py` |
+| GTK GUI | tkinter GUI + CLI | `tuhi_gui.py`, `tuhi_cli.py` |
 
 ## Single-Process Architecture
 
@@ -72,6 +72,17 @@ calls `stop()`.
 
 ## Usage
 
+### GUI (recommended)
+
+```
+python tuhi_gui.py
+```
+
+Starts the tkinter GUI. No arguments needed — the registered device is loaded
+from config automatically.
+
+### CLI
+
 ```
 python tuhi_cli.py list                        # List registered devices
 python tuhi_cli.py search                      # Search for unregistered devices
@@ -79,7 +90,85 @@ python tuhi_cli.py search --register           # Search and register the first f
 python tuhi_cli.py listen XX:XX:XX:XX:XX:XX    # Listen for drawings (sync on button press)
 python tuhi_cli.py fetch  XX:XX:XX:XX:XX:XX    # Export stored drawings as JSON
 python tuhi_cli.py fetch  XX:XX:XX:XX:XX:XX --svg  # Export as JSON + SVG
+python tuhi_cli.py live   XX:XX:XX:XX:XX:XX    # Stream live pen data; Ctrl+C writes JSON
+python tuhi_cli.py live   XX:XX:XX:XX:XX:XX --svg  # Also write SVG on exit
 ```
+
+---
+
+---
+
+## GUI Application (`tuhi_gui.py`)
+
+The GUI is built with **tkinter** (Python built-in — zero extra dependencies).
+Entry point: `python tuhi_gui.py`.
+
+### Layout
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  daniele bamboo  F4:21:DE:4D:26:BF                       │
+│  ● Normal  ○ Live        ● Landscape  ○ Portrait         │
+│  [status bar]                                            │
+├──────────────────────────────────────────────────────────┤
+│  Normal:  [Register]  [Listen]  [Fetch]                  │
+│           ┌──Notebook───────────────────────────────┐   │
+│           │ 2024-01-15 10:30 │ 2024-01-16 … │       │   │
+│           │  <DrawingCanvas>                        │   │
+│           └─────────────────────────────────────────┘   │
+├──────────────────────────────────────────────────────────┤
+│  Live:    [Start Live]                                   │
+│           ┌──LiveCanvas──────────────────────────────┐  │
+│           │  (strokes appear here in realtime)        │  │
+│           └──────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Key classes
+
+| Class | Role |
+|---|---|
+| `TuhiGUIApp(tk.Tk)` | Root window; owns `TuhiApp`, mode/orientation `StringVar`s, status label |
+| `DrawingCanvas(tk.Canvas)` | Renders a `Drawing` as polylines; letterboxed, orientation-aware |
+| `LiveCanvas(tk.Canvas)` | Streams live pen points in real time; same coord transform as `DrawingCanvas` |
+
+### Orientation transform
+
+Applied to every canvas before letterbox scaling:
+
+| Mode | Transform |
+|---|---|
+| Landscape | Identity — `(x, y)` unchanged |
+| Portrait | 90° CCW — `x' = y`, `y' = W − x`; canvas W↔H swapped |
+
+Pressure → line width: `pressure / 0x10000 * 2 + 0.5` px (≈0.5 px at zero, ≈2.5 px at max).
+
+### Normal mode flows
+
+- **Register:** background `threading.Thread` calls `TuhiApp.search()`; status updates
+  via `root.after(0, ...)`. On device found, a `tk.Toplevel` dialog prompts the user
+  to press the hardware button; `TuhiApp.register()` completes pairing.
+- **Listen:** background thread calls `TuhiApp.start_listening()`; button toggles to
+  `[Stop]`. Each new drawing arrives via callback → added as a `ttk.Notebook` tab.
+- **Fetch:** synchronous disk read via `TuhiApp.config.load_drawings()`; clears
+  existing tabs and adds one per drawing.
+
+### Live mode
+
+Switching the `Normal | Live` selector hides the Notebook and shows a single
+`LiveCanvas` filling the window. `[Start Live]` calls `TuhiApp.start_live()` with an
+`on_pen_point` callback delivered via `root.after(0, ...)`:
+
+- `in_proximity=True` → append point to current polyline segment and redraw.
+- `in_proximity=False` (pen lift) → seal segment; next point starts a new one.
+
+Switching back to Normal mode automatically calls `TuhiApp.stop_live()`.
+
+### Thread safety
+
+All BLE operations run in background `threading.Thread`s. UI mutations are always
+posted to the main thread via `root.after(0, callback)` — never called directly
+from BLE threads.
 
 ---
 
@@ -142,7 +231,38 @@ tuhi_cli.py (TuhiApp)                        Wacom device
     │── BLE disconnect ─────────────────────────> │
 ```
 
-### 3. Exporting Drawings
+### 3. Live Pen Streaming
+
+```
+tuhi_cli.py / tuhi_gui.py (TuhiApp)         Wacom device
+    │                                              │
+    │  start_live(address, on_pen_point)           │
+    │── BLE scan start ─────────────────────────> │
+    │                        <─ advertisement ────│
+    │── BLE connect ────────────────────────────> │
+    │                         <─ connected ───────│
+    │                                              │
+    │── SET_MODE=LIVE ──────────────────────────> │
+    │                                              │
+    │           (per pen point, continuously)      │
+    │                        <─ 0xa1 packet ──────│
+    │  _on_pen_data_changed()                      │
+    │  emit('live-pen-data', x, y, pressure, True) │
+    │  on_pen_point(x, y, pressure, True)          │
+    │                                              │
+    │              (pen lifted)                    │
+    │                        <─ ff ff ff ff ff ff ─│
+    │  emit('live-pen-data', 0, 0, 0, False)       │
+    │  on_pen_point(0, 0, 0, False)                │
+    │                                              │
+    │  [Ctrl+C or stop_live()]                     │
+    │  seal drawing → write live_<ts>.json [.svg]  │
+    │── BLE disconnect ─────────────────────────> │
+```
+
+Signal chain: `WacomProtocolBase → WacomDevice → TuhiDevice → AppDevice → caller callback`
+
+### 4. Exporting Drawings
 
 Drawings are read directly from disk — no BLE needed:
 
@@ -189,6 +309,7 @@ C:\Users\<user>\AppData\Roaming\tuhi\
 | `tuhi/base_win.py` | `TuhiDevice` — wires BLE device to AppDevice and drives Wacom protocol |
 | `tuhi/export_win.py` | SVG/PNG export using svgwrite + Pillow |
 | `tuhi_cli.py` | CLI entry point |
+| `tuhi_gui.py` | tkinter GUI entry point |
 
 ## Installation
 
@@ -216,11 +337,10 @@ discovery succeeds.
 
 ## Limitations
 
-- **Live mode**: Pen data is logged but NOT injected into the system.
+- **Live mode — system injection**: Pen data is streamed into the GUI / CLI
+  in real time but is NOT injected into the Windows input system.
   Windows has no equivalent of Linux's `/dev/uhid`. A future integration
   with ViGEmBus or a custom HID minidriver could enable this.
-- **No GTK GUI**: The GTK-based GUI is replaced by a CLI client. A native
-  Windows GUI could be built with tkinter, Qt, or WinUI.
 - **BLE stability**: bleak uses the Windows Bluetooth API, which may behave
   differently from BlueZ. Connection reliability depends on the Windows
   Bluetooth stack and driver quality.

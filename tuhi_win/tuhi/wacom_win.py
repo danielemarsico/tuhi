@@ -829,12 +829,18 @@ class WacomDevice(Object):
         except AuthorizationError as e:
             logger.error('Authorization failed, device needs to be re-registered')
             exception = e
+        except MissingReplyError as e:
+            logger.warning(f'{self._device.address}: no reply from device (timeout or disconnect)')
+            exception = e
         finally:
             self.sync_state = 0
             self._is_running = False
             self.emit('done', exception)
 
     def start_listen(self):
+        if self._is_running:
+            logger.warning(f'{self._device.address}: already syncing, ignoring start_listen')
+            return
         self.thread = threading.Thread(target=self._run, args=(DeviceMode.LISTEN,))
         self.thread.start()
 
@@ -843,6 +849,9 @@ class WacomDevice(Object):
         self.thread.start()
 
     def stop_live(self):
+        if not self._device._connected:
+            logger.debug(f'{self._device.address}: device not connected, skipping stop_live')
+            return
         self.thread = threading.Thread(target=self._run, args=(DeviceMode.LIVE, False, -1))
         self.thread.start()
 

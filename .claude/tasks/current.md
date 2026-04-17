@@ -23,55 +23,65 @@ Complete these in order. After each task, append status to PROGRESS.md. Stop and
 — no SVG library needed.
 
 ### A1 — Window skeleton
-- [ ] Create `tuhi_win/tuhi_gui.py` with `TuhiGUIApp(tk.Tk)`.
-- [ ] Top bar row 1: `device_label` (StringVar — address + name, or "No device registered").
-- [ ] Top bar row 2: mode selector `● Normal ○ Live` (left) +
+- [x] Create `tuhi_win/tuhi_gui.py` with `TuhiGUIApp(tk.Tk)`.
+- [x] Top bar row 1: `device_label` (StringVar — address + name, or "No device registered").
+- [x] Top bar row 2: mode selector `● Normal ○ Live` (left) +
   orientation selector `● Landscape ○ Portrait` (right) + `status_label`.
-- [ ] Normal-mode action bar: `[Register]` `[Listen]` `[Fetch]`.
-- [ ] Main area: `ttk.Notebook` (empty at startup); hidden in Live mode.
-- [ ] On startup: read `TuhiConfig`, populate `device_label` if a device is registered.
+- [x] Normal-mode action bar: `[Register]` `[Listen]` `[Fetch]`.
+- [x] Main area: `ttk.Notebook` (empty at startup); hidden in Live mode.
+- [x] On startup: read `TuhiConfig`, populate `device_label` if a device is registered.
 
 ### A2 — DrawingCanvas widget
-- [ ] `DrawingCanvas(tk.Canvas)`: takes a `Drawing` object and an `orientation`
+- [x] `DrawingCanvas(tk.Canvas)`: takes a `Drawing` object and an `orientation`
   (`'landscape'` or `'portrait'`), renders all strokes as polylines.
-- [ ] Coordinate normalisation: `Drawing.dimensions = (W, H)` in device units →
+- [x] Coordinate normalisation: `Drawing.dimensions = (W, H)` in device units →
   scale to canvas pixel size, preserving aspect ratio with letterboxing.
-- [ ] **Orientation transform** (applied before scaling):
+- [x] **Orientation transform** (applied before scaling):
   - Landscape: identity — `(x, y)` as-is.
   - Portrait: rotate 90° CCW — `(x', y') = (y, W - x)`, swap canvas W↔H.
-- [ ] Pressure → line width: map `pressure / 0x10000 * 2 + 0.5` px
+- [x] Pressure → line width: map `pressure / 0x10000 * 2 + 0.5` px
   (thin at zero, ~2.5 px at max).
-- [ ] Pen-up gaps (consecutive points with `position is None`) break the polyline.
-- [ ] `redraw(orientation)` method: re-renders existing drawing with new orientation
+- [x] Pen-up gaps (consecutive points with `position is None`) break the polyline.
+- [x] `redraw(orientation)` method: re-renders existing drawing with new orientation
   so the selector takes effect immediately on all visible tabs.
 
 ### A2b — Orientation selector behaviour
-- [ ] `● Landscape ○ Portrait` radio buttons stored as a shared `tk.StringVar`.
-- [ ] On change: call `redraw(orientation)` on every `DrawingCanvas` in the Notebook
+- [x] `● Landscape ○ Portrait` radio buttons stored as a shared `tk.StringVar`.
+- [x] On change: call `redraw(orientation)` on every `DrawingCanvas` in the Notebook
   and on the `LiveCanvas` (if in Live mode).
-- [ ] Selected orientation persisted in memory for the session (not to disk).
+- [x] Selected orientation persisted in memory for the session (not to disk).
 
 ### A3 — Register flow
-- [ ] `[Register]` button: disabled while another operation is running.
-- [ ] Run `TuhiApp.search(timeout=30, on_found=..., stop_early=True)` in a
+- [x] `[Register]` button: disabled while another operation is running.
+- [x] Run `TuhiApp.search(timeout=30, on_found=..., stop_early=True)` in a
   `threading.Thread`; update `status_label` via `root.after(0, ...)` on each event.
-- [ ] When a device is found: show a `tk.Toplevel` dialog "Press the button on
+- [x] When a device is found: show a `tk.Toplevel` dialog "Press the button on
   your device" and call `TuhiApp.register(address, on_button_press=...)`.
-- [ ] On completion: update `device_label`, re-enable buttons.
+- [x] On completion: update `device_label`, re-enable buttons.
 
 ### A4 — Listen flow
-- [ ] `[Listen]` button: calls `TuhiApp.start_listening(address, on_drawings=cb)`
+- [x] `[Listen]` button: calls `TuhiApp.start_listening(address, on_drawings=cb)`
   in a background thread; button label toggles to `[Stop]`.
-- [ ] `on_drawings(app_dev)` callback (arrives on BLE thread): calls
+- [x] `on_drawings(app_dev)` callback (arrives on BLE thread): calls
   `root.after(0, lambda: _add_drawing_tab(drawing))` for each new drawing.
-- [ ] `[Stop]` calls `TuhiApp.stop_listening(address)`.
+- [x] `[Stop]` calls `TuhiApp.stop_listening(address)`.
 
 ### A5 — Fetch flow
-- [ ] `[Fetch]` button: calls `TuhiApp.config.load_drawings(address)` (disk read,
+- [x] `[Fetch]` button: calls `TuhiApp.config.load_drawings(address)` (disk read,
   no BLE needed); for each `Drawing` adds a `ttk.Notebook` tab labelled with the
   human-readable timestamp and shows a `DrawingCanvas`.
-- [ ] If Notebook already has tabs, clear them first.
-- [ ] If no drawings: show a `tk.messagebox` info prompt.
+- [x] If Notebook already has tabs, clear them first.
+- [x] If no drawings: show a `tk.messagebox` info prompt.
+
+
+### A6 — GUI improvement
+- [x] Add a "x" icon for each tab in order to close the tab (without deleting it)
+- [x] load all drawings at startup
+- [x] Add a toolbar to the gui with three buttons: disk icon for saving on filesystem the exported draw, delete icon to delete the saved drawing.
+- [x] Add the tool bar to the layout description in claude.MD
+- [x] Set portrait as default mode
+- [x] Drawings must be saved with the portrait/default mode so in case i switch mode, the existing draws are not rotated
+
 
 ---
 
@@ -99,54 +109,54 @@ Drawings are accumulated in memory during the live session; file is written on
   Switching back to Normal mode stops any active live session.
 
 ### B1 — Expose live pen data as a signal
-- [ ] Add `'live-pen-data': (1, None, (int, int, int, bool))` signal to
+- [x] Add `'live-pen-data': (1, None, (int, int, int, bool))` signal to
   `WacomProtocolBase.__gsignals__` and `WacomDevice.__gsignals__`.
-- [ ] In `WacomProtocolBase._on_pen_data_changed()`:
+- [x] In `WacomProtocolBase._on_pen_data_changed()`:
   - `0xa1` in-proximity point → `emit('live-pen-data', x, y, pressure, True)`.
   - `0xa1` `\xff\xff\xff\xff\xff\xff` pen-lift → `emit('live-pen-data', 0, 0, 0, False)`.
   - Keep existing UHID call so Linux behaviour is unchanged.
-- [ ] `WacomDevice`: forward the signal from the inner protocol object (same
+- [x] `WacomDevice`: forward the signal from the inner protocol object (same
   pattern as `drawing` and `battery-status` signals).
 
 ### B2 — Wire live signal through AppDevice / TuhiDevice / TuhiApp
-- [ ] Add `'live-pen-data': (1, None, (int, int, int, bool))` to
+- [x] Add `'live-pen-data': (1, None, (int, int, int, bool))` to
   `AppDevice.__gsignals__`.
-- [ ] In `TuhiDevice._on_bluez_device_connected` (LIVE branch): connect
+- [x] In `TuhiDevice._on_bluez_device_connected` (LIVE branch): connect
   `wacom_device.live-pen-data → app_dev.emit('live-pen-data', ...)`.
-- [ ] `TuhiApp.start_live(address, on_pen_point=None)`:
+- [x] `TuhiApp.start_live(address, on_pen_point=None)`:
   set `app_dev.live = True`; if `on_pen_point` given, connect it to
   `app_dev.live-pen-data` and start discovery.
-- [ ] `TuhiApp.stop_live(address)`: set `app_dev.live = False`.
+- [x] `TuhiApp.stop_live(address)`: set `app_dev.live = False`.
 
 ### B3 — CLI `live` command
-- [ ] Add `live` subparser to `tuhi_cli.py`:
+- [x] Add `live` subparser to `tuhi_cli.py`:
   ```
   python tuhi_cli.py live XX:XX:XX:XX:XX:XX [--svg] [--output PATH]
   ```
-- [ ] Accumulate incoming `(x, y, pressure, in_proximity)` events into a
+- [x] Accumulate incoming `(x, y, pressure, in_proximity)` events into a
   `Drawing` object (device dimensions from `TuhiConfig`).
   - `in_proximity=True` → add point to current stroke.
   - `in_proximity=False` (pen lift) → seal stroke, start next.
-- [ ] On `Ctrl+C` or BLE disconnect: seal the drawing, call
+- [x] On `Ctrl+C` or BLE disconnect: seal the drawing, call
   `Drawing.to_json()`, write `live_<timestamp>.json`.
-- [ ] If `--svg`: also write `live_<timestamp>.svg` via `export_win.JsonSvg`.
-- [ ] Print summary: number of strokes, output files written.
+- [x] If `--svg`: also write `live_<timestamp>.svg` via `export_win.JsonSvg`.
+- [x] Print summary: number of strokes, output files written.
 
 ### B4 — GUI mode switch + live canvas
-- [ ] Add `Normal | Live` mode selector (radio buttons or segmented control)
+- [x] Add `Normal | Live` mode selector (radio buttons or segmented control)
   below the device label.
-- [ ] **Normal mode:** existing Register / Listen / Fetch / Notebook layout.
-- [ ] **Live mode:** hide Notebook; show a single `LiveCanvas(tk.Canvas)` that
+- [x] **Normal mode:** existing Register / Listen / Fetch / Notebook layout.
+- [x] **Live mode:** hide Notebook; show a single `LiveCanvas(tk.Canvas)` that
   fills the window. `[Start Live]` / `[Stop Live]` toggle button.
-- [ ] `LiveCanvas` receives `on_pen_point(x, y, pressure, in_proximity)` via
+- [x] `LiveCanvas` receives `on_pen_point(x, y, pressure, in_proximity)` via
   `root.after(0, ...)`:
   - `in_proximity=True`: append to current polyline segment; redraw.
   - `in_proximity=False`: seal segment; next point starts a new segment.
   - Coordinates normalised using device dimensions from config, with the same
     landscape/portrait transform as `DrawingCanvas`.
-- [ ] Orientation selector change redraws the LiveCanvas immediately (re-maps all
+- [x] Orientation selector change redraws the LiveCanvas immediately (re-maps all
   accumulated segments).
-- [ ] Switching mode selector back to Normal stops any active live session.
+- [x] Switching mode selector back to Normal stops any active live session.
 
 ### B5 — Bamboo Folio smoke-test
 - [ ] CLI: `python tuhi_cli.py live F4:21:DE:4D:26:BF --svg` → draw → Ctrl+C →

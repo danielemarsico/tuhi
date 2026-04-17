@@ -359,7 +359,9 @@ class MissingReplyError(ProtocolError):
     errno = errno.ETIME
 
     def __init__(self, request, message=None):
+        super().__init__(message)
         self.request = request
+        self.message = message
 
     def __str__(self):
         return f'Missing reply for request {self.request}. {self.message}'
